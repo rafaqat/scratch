@@ -45,20 +45,11 @@ export default defineConfig(async () => ({
       output: {
         // Manual chunk splitting for better caching
         manualChunks: {
-          // TipTap and related editor libraries
-          "tiptap": [
-            "@tiptap/react",
-            "@tiptap/starter-kit",
-            "@tiptap/markdown",
-            "@tiptap/extension-link",
-            "@tiptap/extension-image",
-            "@tiptap/extension-placeholder",
-            "@tiptap/extension-task-list",
-            "@tiptap/extension-task-item",
-            "@tiptap/extension-table",
-            "@tiptap/extension-table-row",
-            "@tiptap/extension-table-cell",
-            "@tiptap/extension-table-header",
+          // BlockNote and related editor libraries
+          "blocknote": [
+            "@blocknote/core",
+            "@blocknote/react",
+            "@blocknote/mantine",
           ],
           // React core
           "react-vendor": ["react", "react-dom"],
@@ -73,7 +64,7 @@ export default defineConfig(async () => ({
     },
     // Enable source maps for debugging (optional, can disable for smaller builds)
     sourcemap: false,
-    // Increase chunk size warning limit (TipTap is large)
+    // Increase chunk size warning limit (BlockNote is large)
     chunkSizeWarningLimit: 1000,
   },
 
@@ -83,9 +74,9 @@ export default defineConfig(async () => ({
     include: [
       "react",
       "react-dom",
-      "@tiptap/react",
-      "@tiptap/starter-kit",
-      "@tiptap/markdown",
+      "@blocknote/core",
+      "@blocknote/react",
+      "@blocknote/mantine",
     ],
   },
 }));

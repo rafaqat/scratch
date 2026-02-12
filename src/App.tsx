@@ -118,7 +118,7 @@ function AppContent() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      const isInEditor = target.closest(".ProseMirror");
+      const isInEditor = target.closest(".bn-editor");
       const isInInput =
         target.tagName === "INPUT" || target.tagName === "TEXTAREA";
 
@@ -193,7 +193,7 @@ function AppContent() {
         // Enter to focus editor
         if (e.key === "Enter" && selectedNoteId) {
           e.preventDefault();
-          const editor = document.querySelector(".ProseMirror") as HTMLElement;
+          const editor = document.querySelector(".bn-editor") as HTMLElement;
           if (editor) {
             editor.focus();
           }
@@ -214,9 +214,9 @@ function AppContent() {
     // Disable right-click context menu except in editor
     const handleContextMenu = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      // Allow context menu in editor (prose class) and inputs
+      // Allow context menu in editor and inputs
       const isInEditor =
-        target.closest(".prose") || target.closest(".ProseMirror");
+        target.closest(".bn-editor") || target.closest(".ProseMirror");
       const isInput =
         target.tagName === "INPUT" || target.tagName === "TEXTAREA";
       if (!isInEditor && !isInput) {
