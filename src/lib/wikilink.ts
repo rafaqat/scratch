@@ -1,12 +1,14 @@
 /**
- * Wikilink markdown round-trip utilities.
+ * Markdown round-trip utilities for custom inline content and blocks.
  *
- * On import: post-processes a BlockNote block tree to convert text
- * containing [[Title]] patterns into wikilink inline content nodes.
+ * On import: post-processes a BlockNote block tree to convert:
+ * - [[Title]] patterns into wikilink inline content nodes
+ * - [toc] paragraphs into TOC block nodes
+ * - $$...$$ blocks into equation block nodes
+ * - $...$ inline patterns into inlineEquation inline content nodes
  *
- * On export: converts wikilink inline content back to [[Title]] text.
- * (BlockNote's blocksToMarkdownLossy renders unknown inline content
- * via toExternalHTML, so we handle it there instead.)
+ * On export: custom components handle serialization via toExternalHTML.
+ * Additional postprocessing restores equation block syntax.
  */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -15,31 +17,52 @@ type AnyBlock = any;
 type AnyInlineContent = any;
 
 const WIKILINK_RE = /\[\[([^\]]+)\]\]/g;
+// Match $...$ inline equations, but NOT $$ (block equations)
+// Negative lookbehind/lookahead for $ to avoid matching $$...$$ markers
+const INLINE_EQUATION_RE = /(?<!\$)\$(?!\$)([^\n$]+?)\$(?!\$)/g;
 
 /**
- * Walk a BlockNote block tree and convert [[Title]] text patterns
- * in inline content arrays into wikilink inline content nodes.
- * Also converts `[toc]` paragraphs into TOC block nodes.
+ * Walk a BlockNote block tree and convert text patterns
+ * into custom inline content and block nodes.
  */
 export function injectWikilinks(blocks: AnyBlock[]): AnyBlock[] {
-  return blocks.map((block) => {
-    // Convert [toc] paragraph blocks into TOC blocks
-    if (block.type === "paragraph" && isTocParagraph(block)) {
-      return { type: "toc", props: {}, children: [] };
+  const result: AnyBlock[] = [];
+  let i = 0;
+
+  while (i < blocks.length) {
+    const block = blocks[i];
+
+    // Check for $$...$$ block equation pattern
+    const eqResult = tryExtractBlockEquation(blocks, i);
+    if (eqResult) {
+      result.push({
+        type: "equation",
+        props: { equation: eqResult.equation },
+        children: [],
+      });
+      i = eqResult.nextIndex;
+      continue;
     }
 
-    const result = { ...block };
+    // Convert [toc] paragraph blocks into TOC blocks
+    if (block.type === "paragraph" && isTocParagraph(block)) {
+      result.push({ type: "toc", props: {}, children: [] });
+      i++;
+      continue;
+    }
+
+    const processed = { ...block };
 
     // Process inline content if present
-    if (Array.isArray(result.content)) {
-      result.content = processInlineContent(result.content);
+    if (Array.isArray(processed.content)) {
+      processed.content = processInlineContent(processed.content);
     }
 
     // Process table cells
-    if (result.type === "table" && result.content?.type === "tableContent") {
-      result.content = {
-        ...result.content,
-        rows: result.content.rows.map((row: { cells: AnyInlineContent[][] }) => ({
+    if (processed.type === "table" && processed.content?.type === "tableContent") {
+      processed.content = {
+        ...processed.content,
+        rows: processed.content.rows.map((row: { cells: AnyInlineContent[][] }) => ({
           ...row,
           cells: row.cells.map((cell: AnyInlineContent[]) =>
             processInlineContent(cell),
@@ -49,12 +72,58 @@ export function injectWikilinks(blocks: AnyBlock[]): AnyBlock[] {
     }
 
     // Recurse into children
-    if (Array.isArray(result.children) && result.children.length > 0) {
-      result.children = injectWikilinks(result.children);
+    if (Array.isArray(processed.children) && processed.children.length > 0) {
+      processed.children = injectWikilinks(processed.children);
     }
 
-    return result;
-  });
+    result.push(processed);
+    i++;
+  }
+
+  return result;
+}
+
+/**
+ * Try to extract a block equation ($$...$$) starting at blocks[index].
+ * Returns the equation text and the next index to continue from,
+ * or null if no block equation found.
+ */
+function tryExtractBlockEquation(
+  blocks: AnyBlock[],
+  index: number,
+): { equation: string; nextIndex: number } | null {
+  const block = blocks[index];
+  if (block.type !== "paragraph" || !Array.isArray(block.content)) return null;
+
+  const text = getBlockText(block);
+
+  // Case 1: Single block $$equation$$
+  const singleMatch = text.match(/^\$\$([\s\S]*?)\$\$$/);
+  if (singleMatch) {
+    return { equation: singleMatch[1].trim(), nextIndex: index + 1 };
+  }
+
+  // Case 2: Block starts with $$ - look for closing $$ in subsequent blocks
+  if (text.trimStart().startsWith("$$")) {
+    const lines: string[] = [text.trimStart().slice(2)];
+
+    for (let j = index + 1; j < blocks.length; j++) {
+      const nextBlock = blocks[j];
+      if (nextBlock.type !== "paragraph") break;
+
+      const nextText = getBlockText(nextBlock);
+
+      if (nextText.trimEnd().endsWith("$$")) {
+        lines.push(nextText.trimEnd().slice(0, -2));
+        const equation = lines.join("\n").trim();
+        return { equation, nextIndex: j + 1 };
+      }
+
+      lines.push(nextText);
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -68,17 +137,29 @@ function isTocParagraph(block: AnyBlock): boolean {
   return node.text.trim() === "[toc]";
 }
 
+/**
+ * Extract plain text from a block's inline content.
+ */
+function getBlockText(block: AnyBlock): string {
+  if (!Array.isArray(block.content)) return "";
+  return block.content
+    .map((node: AnyInlineContent) => {
+      if (typeof node === "string") return node;
+      if (node.type === "text" && typeof node.text === "string") return node.text;
+      return "";
+    })
+    .join("");
+}
+
 function processInlineContent(content: AnyInlineContent[]): AnyInlineContent[] {
   const result: AnyInlineContent[] = [];
 
   for (const node of content) {
-    // Only process text nodes (not links, not existing wikilinks)
     if (node.type !== "text" || typeof node.text !== "string") {
       result.push(node);
       continue;
     }
 
-    // Skip text nodes that are styled as code (inline code)
     if (node.styles?.code) {
       result.push(node);
       continue;
@@ -87,55 +168,93 @@ function processInlineContent(content: AnyInlineContent[]): AnyInlineContent[] {
     const text = node.text as string;
     const styles = node.styles || {};
 
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-    WIKILINK_RE.lastIndex = 0;
-    let hasMatch = false;
+    const segments = splitInlinePatterns(text, styles);
+    result.push(...segments);
+  }
 
-    while ((match = WIKILINK_RE.exec(text)) !== null) {
-      const inner = match[1].trim();
-      if (!inner) continue; // skip empty [[]]
+  return result;
+}
 
-      // Support alias syntax: [[Title|display text]]
-      const pipeIndex = inner.indexOf("|");
-      const title = pipeIndex >= 0 ? inner.slice(0, pipeIndex).trim() : inner;
-      const alias = pipeIndex >= 0 ? inner.slice(pipeIndex + 1).trim() : "";
+/**
+ * Split text into segments, replacing [[wikilink]] and $equation$ patterns
+ * with their respective inline content nodes.
+ */
+function splitInlinePatterns(text: string, styles: Record<string, unknown>): AnyInlineContent[] {
+  const result: AnyInlineContent[] = [];
 
-      if (!title) continue;
+  const matches: Array<{
+    index: number;
+    length: number;
+    node: AnyInlineContent;
+  }> = [];
 
-      hasMatch = true;
+  // Wikilinks: [[Title]] or [[Title|alias]]
+  WIKILINK_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = WIKILINK_RE.exec(text)) !== null) {
+    const inner = match[1].trim();
+    if (!inner) continue;
 
-      // Add text before the match
-      if (match.index > lastIndex) {
-        result.push({
-          type: "text",
-          text: text.slice(lastIndex, match.index),
-          styles,
-        });
-      }
+    const pipeIndex = inner.indexOf("|");
+    const title = pipeIndex >= 0 ? inner.slice(0, pipeIndex).trim() : inner;
+    const alias = pipeIndex >= 0 ? inner.slice(pipeIndex + 1).trim() : "";
 
-      // Add wikilink node
+    if (!title) continue;
+
+    matches.push({
+      index: match.index,
+      length: match[0].length,
+      node: { type: "wikilink", props: { title, alias } },
+    });
+  }
+
+  // Inline equations: $...$
+  INLINE_EQUATION_RE.lastIndex = 0;
+  while ((match = INLINE_EQUATION_RE.exec(text)) !== null) {
+    const equation = match[1].trim();
+    if (!equation) continue;
+
+    const overlaps = matches.some(
+      (m) =>
+        (match!.index >= m.index && match!.index < m.index + m.length) ||
+        (m.index >= match!.index && m.index < match!.index + match![0].length),
+    );
+    if (overlaps) continue;
+
+    matches.push({
+      index: match.index,
+      length: match[0].length,
+      node: { type: "inlineEquation", props: { equation } },
+    });
+  }
+
+  if (matches.length === 0) {
+    result.push({ type: "text", text, styles });
+    return result;
+  }
+
+  matches.sort((a, b) => a.index - b.index);
+
+  let lastIndex = 0;
+  for (const m of matches) {
+    if (m.index > lastIndex) {
       result.push({
-        type: "wikilink",
-        props: { title, alias },
+        type: "text",
+        text: text.slice(lastIndex, m.index),
+        styles,
       });
-
-      lastIndex = match.index + match[0].length;
     }
 
-    if (hasMatch) {
-      // Add remaining text after the last match
-      if (lastIndex < text.length) {
-        result.push({
-          type: "text",
-          text: text.slice(lastIndex),
-          styles,
-        });
-      }
-    } else {
-      // No matches, keep original node
-      result.push(node);
-    }
+    result.push(m.node);
+    lastIndex = m.index + m.length;
+  }
+
+  if (lastIndex < text.length) {
+    result.push({
+      type: "text",
+      text: text.slice(lastIndex),
+      styles,
+    });
   }
 
   return result;
@@ -143,13 +262,7 @@ function processInlineContent(content: AnyInlineContent[]): AnyInlineContent[] {
 
 /**
  * Convert wikilink references back to [[Title]] in markdown text.
- * This is used as a safety net for the export path — normally
- * toExternalHTML handles this via the Wikilink component's
- * toExternalHTML render function.
  */
 export function restoreWikilinks(markdown: string): string {
-  // No-op: the toExternalHTML render in Wikilink.tsx outputs [[Title]]
-  // which survives the HTML → markdown conversion. This function exists
-  // as a hook point if we ever need post-processing.
   return markdown;
 }

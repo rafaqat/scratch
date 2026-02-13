@@ -53,7 +53,7 @@ BlockNote supports custom blocks. Add the most-requested Notion block types.
 | Story | Title | Points | Status | Depends On |
 |-------|-------|--------|--------|------------|
 | [S-0003-07](stories/S-0003-07.md) | Callout block | 3 | Done | — |
-| [S-0003-08](stories/S-0003-08.md) | Equation block | 3 | In Progress | — |
+| [S-0003-08](stories/S-0003-08.md) | Equation block | 3 | Done | — |
 | [S-0003-09](stories/S-0003-09.md) | Bookmark block | 3 | Backlog | — |
 | [S-0003-10](stories/S-0003-10.md) | Table of contents block | 2 | Done | — |
 
