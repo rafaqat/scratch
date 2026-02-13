@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useNotes } from "../../context/NotesContext";
+import { useTheme } from "../../context/ThemeContext";
 import { NoteList } from "../notes/NoteList";
 import { Footer } from "./Footer";
-import { IconButton, Input } from "../ui";
+import { IconButton, Input, Tooltip } from "../ui";
 import {
   PlusIcon,
   XIcon,
   SpinnerIcon,
   SearchIcon,
   SearchOffIcon,
+  FolderIcon,
 } from "../icons";
 import { mod, isMac } from "../../lib/platform";
 
@@ -17,8 +20,9 @@ interface SidebarProps {
 }
 
 export function Sidebar({ onOpenSettings }: SidebarProps) {
-  const { createNote, notes, search, searchQuery, clearSearch, isSearching } =
+  const { createNote, notes, notesFolder, setNotesFolder, search, searchQuery, clearSearch, isSearching } =
     useNotes();
+  const { reloadSettings } = useTheme();
   const [searchOpen, setSearchOpen] = useState(false);
   const [inputValue, setInputValue] = useState(searchQuery);
   const debounceRef = useRef<number | null>(null);
@@ -88,17 +92,40 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
     clearSearch();
   }, [clearSearch]);
 
+  const handleChangeFolder = useCallback(async () => {
+    try {
+      const selected = await invoke<string | null>("open_folder_dialog", {
+        defaultPath: notesFolder || null,
+      });
+      if (selected) {
+        await setNotesFolder(selected);
+        await reloadSettings();
+      }
+    } catch (err) {
+      console.error("Failed to select folder:", err);
+    }
+  }, [notesFolder, setNotesFolder, reloadSettings]);
+
+  // Extract just the folder name from the full path
+  const folderName = notesFolder ? notesFolder.split("/").pop() || notesFolder : "Notes";
+
   return (
     <div className="w-64 h-full bg-bg-secondary border-r border-border flex flex-col select-none">
       {/* Drag region */}
       <div className="h-11 shrink-0" data-tauri-drag-region></div>
-      <div className="flex items-center justify-between pl-4 pr-3 pb-2 border-b border-border shrink-0">
-        <div className="flex items-center gap-1">
-          <div className="font-medium text-base">Notes</div>
-          <div className="text-text-muted font-medium text-2xs min-w-4.75 h-4.75 flex items-center justify-center px-1 bg-bg-muted rounded-sm mt-0.5 pt-px">
-            {notes.length}
-          </div>
-        </div>
+      <div className="flex items-center justify-between pl-3 pr-3 pb-2 border-b border-border shrink-0">
+        <Tooltip content={notesFolder || "No folder selected"}>
+          <button
+            onClick={handleChangeFolder}
+            className="flex items-center gap-1.5 hover:bg-bg-muted rounded-md px-1 py-0.5 -ml-1 transition-colors cursor-pointer group"
+          >
+            <FolderIcon className="w-3.5 h-3.5 stroke-[1.5] text-text-muted group-hover:text-text transition-colors shrink-0" />
+            <span className="font-medium text-base truncate max-w-28">{folderName}</span>
+            <span className="text-text-muted font-medium text-2xs min-w-4.75 h-4.75 flex items-center justify-center px-1 bg-bg-muted rounded-sm mt-0.5 pt-px">
+              {notes.length}
+            </span>
+          </button>
+        </Tooltip>
         <div className="flex items-center gap-px">
           <IconButton onClick={toggleSearch} title="Search">
             {searchOpen ? (

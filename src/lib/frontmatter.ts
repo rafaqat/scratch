@@ -1,13 +1,20 @@
 export interface StoryFrontmatter {
   id: string;
-  epic: string;
   title: string;
   status: string;
-  owner?: string;
   estimate_points?: number;
   tags?: string[];
-  links?: Record<string, string>;
-  timestamps: { created_at: string; updated_at: string };
+  owner?: string;
+  created_at?: string;
+  started_at?: string;
+  completed_at?: string;
+  target_version?: string;
+  commits?: string[];
+  links?: {
+    epic?: string;
+    blocks?: string[];
+    blockedBy?: string[];
+  };
 }
 
 const DELIMITER = "---";
@@ -30,6 +37,15 @@ function parseYamlValue(raw: string): string | number | boolean | null {
   return trimQuotes(trimmed);
 }
 
+// Parse inline array: [a, b, c]
+function parseInlineArray(raw: string): string[] | null {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return null;
+  const inner = trimmed.slice(1, -1).trim();
+  if (inner === "") return [];
+  return inner.split(",").map((s) => trimQuotes(s.trim()));
+}
+
 export function parseFrontmatter(
   content: string
 ): { frontmatter: StoryFrontmatter; body: string } | null {
@@ -37,10 +53,8 @@ export function parseFrontmatter(
 
   const endIdx = content.indexOf("\n" + DELIMITER + "\n", DELIMITER.length);
   if (endIdx === -1) {
-    // Check for --- at very end with no trailing newline
     const endIdx2 = content.indexOf("\n" + DELIMITER, DELIMITER.length);
     if (endIdx2 === -1 || endIdx2 + 1 + DELIMITER.length !== content.length) return null;
-    // frontmatter with no body
     const yamlStr = content.slice(DELIMITER.length + 1, endIdx2);
     const fm = parseYamlBlock(yamlStr);
     if (!fm) return null;
@@ -59,7 +73,7 @@ function parseYamlBlock(yaml: string): StoryFrontmatter | null {
   const result: Record<string, unknown> = {};
   let currentKey: string | null = null;
   let currentArray: string[] | null = null;
-  let currentObject: Record<string, string> | null = null;
+  let currentObject: Record<string, unknown> | null = null;
 
   for (const line of lines) {
     if (line.trim() === "") continue;
@@ -75,20 +89,26 @@ function parseYamlBlock(yaml: string): StoryFrontmatter | null {
     if (/^\s{2,}\S/.test(line) && currentKey && currentObject !== null) {
       const match = line.match(/^\s+(\S+):\s*(.*)/);
       if (match) {
-        currentObject[match[1]] = trimQuotes(match[2].trim());
+        const nestedRaw = match[2].trim();
+        // Check for inline array in nested value
+        const inlineArr = parseInlineArray(nestedRaw);
+        if (inlineArr !== null) {
+          currentObject[match[1]] = inlineArr;
+        } else {
+          currentObject[match[1]] = trimQuotes(nestedRaw);
+        }
       }
       continue;
     }
 
     // Flush previous collection
-    if (currentKey && currentArray !== null) {
+    if (currentKey && currentArray !== null && currentArray.length > 0) {
       result[currentKey] = currentArray;
-      currentArray = null;
-    }
-    if (currentKey && currentObject !== null) {
+    } else if (currentKey && currentObject !== null && Object.keys(currentObject).length > 0) {
       result[currentKey] = currentObject;
-      currentObject = null;
     }
+    currentArray = null;
+    currentObject = null;
 
     // Top-level key: value
     const kvMatch = line.match(/^(\S+):\s*(.*)/);
@@ -97,15 +117,20 @@ function parseYamlBlock(yaml: string): StoryFrontmatter | null {
     const key = kvMatch[1];
     const rawValue = kvMatch[2].trim();
 
+    // Check for inline array at top level
+    const inlineArr = parseInlineArray(rawValue);
+    if (inlineArr !== null) {
+      currentKey = null;
+      result[key] = inlineArr;
+      continue;
+    }
+
     if (rawValue === "" || rawValue === undefined) {
-      // Could be start of array or object — peek ahead
       currentKey = key;
       currentArray = [];
       currentObject = {};
     } else {
       currentKey = null;
-      currentArray = null;
-      currentObject = null;
       result[key] = parseYamlValue(rawValue);
     }
   }
@@ -118,51 +143,69 @@ function parseYamlBlock(yaml: string): StoryFrontmatter | null {
   }
 
   // Validate required story fields
-  if (!result.id || !result.epic || !result.title || !result.status || !result.timestamps) {
+  if (!result.id || !result.title || !result.status) {
     return null;
   }
 
-  const ts = result.timestamps as Record<string, string>;
-  if (!ts.created_at || !ts.updated_at) return null;
+  // Build links object
+  let links: StoryFrontmatter["links"] = undefined;
+  if (result.links && typeof result.links === "object" && !Array.isArray(result.links)) {
+    const raw = result.links as Record<string, unknown>;
+    links = {
+      epic: typeof raw.epic === "string" ? raw.epic : undefined,
+      blocks: Array.isArray(raw.blocks) ? raw.blocks as string[] : undefined,
+      blockedBy: Array.isArray(raw.blockedBy) ? raw.blockedBy as string[] : undefined,
+    };
+  }
 
   return {
     id: String(result.id),
-    epic: String(result.epic),
     title: String(result.title),
     status: String(result.status),
-    owner: result.owner ? String(result.owner) : undefined,
     estimate_points: typeof result.estimate_points === "number" ? result.estimate_points : undefined,
     tags: Array.isArray(result.tags) ? result.tags : undefined,
-    links: result.links && typeof result.links === "object" && !Array.isArray(result.links)
-      ? (result.links as Record<string, string>)
-      : undefined,
-    timestamps: { created_at: ts.created_at, updated_at: ts.updated_at },
+    owner: result.owner ? String(result.owner) : undefined,
+    created_at: result.created_at ? String(result.created_at) : undefined,
+    started_at: result.started_at ? String(result.started_at) : undefined,
+    completed_at: result.completed_at ? String(result.completed_at) : undefined,
+    target_version: result.target_version ? String(result.target_version) : undefined,
+    commits: Array.isArray(result.commits) ? result.commits : undefined,
+    links,
   };
 }
 
 export function serializeFrontmatter(fm: StoryFrontmatter): string {
   const lines: string[] = [];
   lines.push(`id: ${fm.id}`);
-  lines.push(`epic: ${fm.epic}`);
-  lines.push(`title: ${fm.title}`);
+  lines.push(`title: "${fm.title}"`);
   lines.push(`status: ${fm.status}`);
-  if (fm.owner) lines.push(`owner: ${fm.owner}`);
   if (fm.estimate_points !== undefined) lines.push(`estimate_points: ${fm.estimate_points}`);
   if (fm.tags && fm.tags.length > 0) {
-    lines.push("tags:");
-    for (const tag of fm.tags) {
-      lines.push(`- ${tag}`);
-    }
+    lines.push(`tags: [${fm.tags.join(", ")}]`);
   }
-  if (fm.links && Object.keys(fm.links).length > 0) {
+  lines.push(`owner: "${fm.owner || ""}"`);
+  lines.push(`created_at: "${fm.created_at || ""}"`);
+  lines.push(`started_at: "${fm.started_at || ""}"`);
+  lines.push(`completed_at: "${fm.completed_at || ""}"`);
+  lines.push(`target_version: "${fm.target_version || ""}"`);
+  if (fm.commits && fm.commits.length > 0) {
+    lines.push("commits:");
+    for (const c of fm.commits) {
+      lines.push(`  - ${c}`);
+    }
+  } else {
+    lines.push("commits: []");
+  }
+  if (fm.links) {
     lines.push("links:");
-    for (const [k, v] of Object.entries(fm.links)) {
-      lines.push(`  ${k}: ${v}`);
+    if (fm.links.epic) lines.push(`  epic: ${fm.links.epic}`);
+    if (fm.links.blocks && fm.links.blocks.length > 0) {
+      lines.push(`  blocks: [${fm.links.blocks.join(", ")}]`);
+    }
+    if (fm.links.blockedBy && fm.links.blockedBy.length > 0) {
+      lines.push(`  blockedBy: [${fm.links.blockedBy.join(", ")}]`);
     }
   }
-  lines.push("timestamps:");
-  lines.push(`  created_at: ${fm.timestamps.created_at}`);
-  lines.push(`  updated_at: ${fm.timestamps.updated_at}`);
 
   return DELIMITER + "\n" + lines.join("\n") + "\n" + DELIMITER;
 }

@@ -10,6 +10,7 @@ import { join } from "@tauri-apps/api/path";
 import { toast } from "sonner";
 import { mod, shift, isMac } from "../../lib/platform";
 import { parseFrontmatter, recombine, type StoryFrontmatter } from "../../lib/frontmatter";
+import { preprocessSvg, postprocessSvg } from "../../lib/svg";
 import { StoryMetaCard } from "./StoryMetaCard";
 
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -118,9 +119,11 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
     async (noteId: string, content: string) => {
       setIsSaving(true);
       try {
+        // Restore SVG code blocks from data-URI images
+        const body = postprocessSvg(content);
         // Recombine frontmatter with body if this is a story file
         const fm = storyFrontmatterRef.current;
-        const fullContent = fm ? recombine(fm, content) : content;
+        const fullContent = fm ? recombine(fm, body) : body;
         lastSaveRef.current = { noteId, content: fullContent };
         await saveNote(fullContent, noteId);
       } finally {
@@ -174,17 +177,20 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
     scheduleSave();
   }, [scheduleSave]);
 
-  // Extract body from content, stripping frontmatter if present
+  // Extract body from content, stripping frontmatter and preprocessing SVG
   const extractBody = useCallback((content: string): string => {
+    let body: string;
     const parsed = parseFrontmatter(content);
     if (parsed) {
       storyFrontmatterRef.current = parsed.frontmatter;
       setStoryFrontmatter(parsed.frontmatter);
-      return parsed.body;
+      body = parsed.body;
+    } else {
+      storyFrontmatterRef.current = null;
+      setStoryFrontmatter(null);
+      body = content;
     }
-    storyFrontmatterRef.current = null;
-    setStoryFrontmatter(null);
-    return content;
+    return preprocessSvg(body);
   }, []);
 
   // Load note content when the current note changes
@@ -272,8 +278,10 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
       if (needsSaveRef.current && editor) {
         needsSaveRef.current = false;
         try {
-          const markdown = editor.blocksToMarkdownLossy(editor.document);
-          saveNote(markdown);
+          let markdown = editor.blocksToMarkdownLossy(editor.document);
+          markdown = postprocessSvg(markdown);
+          const fm = storyFrontmatterRef.current;
+          saveNote(fm ? recombine(fm, markdown) : markdown);
         } catch {
           // Ignore errors during cleanup
         }
