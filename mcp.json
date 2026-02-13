@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "scratch": {
+      "type": "url",
+      "url": "http://localhost:3921/mcp"
+    }
+  }
+}

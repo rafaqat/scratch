@@ -32,4 +32,11 @@ export interface Settings {
   editorFont?: EditorFontSettings;
   gitEnabled?: boolean;
   pinnedNoteIds?: string[];
+  mcpEnabled?: boolean;
+  mcpPort?: number;
+}
+
+export interface McpStatus {
+  running: boolean;
+  port: number;
 }

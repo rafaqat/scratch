@@ -9,6 +9,8 @@ import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
 import { toast } from "sonner";
 import { mod, shift, isMac } from "../../lib/platform";
+import { parseFrontmatter, recombine, type StoryFrontmatter } from "../../lib/frontmatter";
+import { StoryMetaCard } from "./StoryMetaCard";
 
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useNotes } from "../../context/NotesContext";
@@ -64,6 +66,8 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const currentNoteIdRef = useRef<string | null>(null);
   const needsSaveRef = useRef(false);
+  const [storyFrontmatter, setStoryFrontmatter] = useState<StoryFrontmatter | null>(null);
+  const storyFrontmatterRef = useRef<StoryFrontmatter | null>(null);
 
   // Keep ref in sync with current note ID
   currentNoteIdRef.current = currentNote?.id ?? null;
@@ -114,8 +118,11 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
     async (noteId: string, content: string) => {
       setIsSaving(true);
       try {
-        lastSaveRef.current = { noteId, content };
-        await saveNote(content, noteId);
+        // Recombine frontmatter with body if this is a story file
+        const fm = storyFrontmatterRef.current;
+        const fullContent = fm ? recombine(fm, content) : content;
+        lastSaveRef.current = { noteId, content: fullContent };
+        await saveNote(fullContent, noteId);
       } finally {
         setIsSaving(false);
       }
@@ -167,6 +174,19 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
     scheduleSave();
   }, [scheduleSave]);
 
+  // Extract body from content, stripping frontmatter if present
+  const extractBody = useCallback((content: string): string => {
+    const parsed = parseFrontmatter(content);
+    if (parsed) {
+      storyFrontmatterRef.current = parsed.frontmatter;
+      setStoryFrontmatter(parsed.frontmatter);
+      return parsed.body;
+    }
+    storyFrontmatterRef.current = null;
+    setStoryFrontmatter(null);
+    return content;
+  }, []);
+
   // Load note content when the current note changes
   useEffect(() => {
     if (!currentNote || !editor) return;
@@ -187,7 +207,8 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
         isLoadingRef.current = true;
 
         try {
-          const blocks = editor.tryParseMarkdownToBlocks(currentNote.content);
+          const body = extractBody(currentNote.content);
+          const blocks = editor.tryParseMarkdownToBlocks(body);
           editor.replaceBlocks(editor.document, blocks);
         } catch {
           // Fallback: ignore parse errors
@@ -218,9 +239,10 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
 
     isLoadingRef.current = true;
 
-    // Parse markdown and load into BlockNote
+    // Parse frontmatter and load body into BlockNote
     try {
-      const blocks = editor.tryParseMarkdownToBlocks(currentNote.content);
+      const body = extractBody(currentNote.content);
+      const blocks = editor.tryParseMarkdownToBlocks(body);
       if (loadedNoteIdRef.current !== loadingNoteId) return;
       editor.replaceBlocks(editor.document, blocks);
     } catch {
@@ -234,7 +256,7 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
       scrollContainerRef.current?.scrollTo(0, 0);
       isLoadingRef.current = false;
     });
-  }, [currentNote, editor, flushPendingSave, reloadVersion]);
+  }, [currentNote, editor, flushPendingSave, reloadVersion, extractBody]);
 
   // Scroll to top on mount
   useEffect(() => {
@@ -310,6 +332,16 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
       }
     }
   }, [editor]);
+
+  // Handle frontmatter changes from StoryMetaCard (e.g. status dropdown)
+  const handleFrontmatterChange = useCallback(
+    (updated: StoryFrontmatter) => {
+      storyFrontmatterRef.current = updated;
+      setStoryFrontmatter(updated);
+      scheduleSave();
+    },
+    [scheduleSave],
+  );
 
   // Copy handlers
   const handleCopyMarkdown = useCallback(async () => {
@@ -538,6 +570,12 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
         className="flex-1 overflow-y-auto"
       >
         <div className="max-w-3xl mx-auto px-12 pt-4 pb-24">
+          {storyFrontmatter && (
+            <StoryMetaCard
+              frontmatter={storyFrontmatter}
+              onChange={handleFrontmatterChange}
+            />
+          )}
           <BlockNoteView
             editor={editor}
             theme={resolvedTheme}

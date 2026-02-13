@@ -1149,6 +1149,25 @@ export function FoldersIcon({ className = "w-4.5 h-4.5" }: IconProps) {
   );
 }
 
+export function PlugIcon({ className = "w-4.5 h-4.5" }: IconProps) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 22v-5" />
+      <path d="M9 8V2" />
+      <path d="M15 8V2" />
+      <path d="M18 8v5a6 6 0 0 1-6 6 6 6 0 0 1-6-6V8Z" />
+    </svg>
+  );
+}
+
 export function ClaudeIcon({
   className = "w-4.5 h-4.5 text-text-muted",
 }: IconProps) {

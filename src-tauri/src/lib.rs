@@ -15,6 +15,8 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tokio::fs;
 
 mod git;
+mod mcp;
+pub mod stories;
 
 // Note metadata for list display
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +97,10 @@ pub struct Settings {
     pub git_enabled: Option<bool>,
     #[serde(rename = "pinnedNoteIds")]
     pub pinned_note_ids: Option<Vec<String>>,
+    #[serde(rename = "mcpEnabled")]
+    pub mcp_enabled: Option<bool>,
+    #[serde(rename = "mcpPort")]
+    pub mcp_port: Option<u16>,
 }
 
 // Search result
@@ -253,32 +259,28 @@ impl SearchIndex {
         writer.delete_all_documents()?;
 
         if notes_folder.exists() {
-            for entry in std::fs::read_dir(notes_folder)?.flatten() {
-                let file_path = entry.path();
-                if file_path.extension().is_some_and(|ext| ext == "md") {
-                    if let Ok(content) = std::fs::read_to_string(&file_path) {
-                        let metadata = entry.metadata()?;
-                        let modified = metadata
-                            .modified()
-                            .ok()
-                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                            .map(|d| d.as_secs() as i64)
-                            .unwrap_or(0);
+            let files = walk_md_files_sync(notes_folder, notes_folder)
+                .map_err(|e| anyhow::anyhow!(e))?;
 
-                        let id = file_path
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("unknown");
+            for file_path in files {
+                if let Ok(content) = std::fs::read_to_string(&file_path) {
+                    let modified = std::fs::metadata(&file_path)
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
 
-                        let title = extract_title(&content);
+                    let id = path_to_note_id(notes_folder, &file_path)
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let title = extract_title(&content);
 
-                        writer.add_document(doc!(
-                            self.id_field => id,
-                            self.title_field => title,
-                            self.content_field => content.as_str(),
-                            self.modified_field => modified,
-                        ))?;
-                    }
+                    writer.add_document(doc!(
+                        self.id_field => id.as_str(),
+                        self.title_field => title,
+                        self.content_field => content.as_str(),
+                        self.modified_field => modified,
+                    ))?;
                 }
             }
         }
@@ -288,26 +290,41 @@ impl SearchIndex {
     }
 }
 
-// App state with improved structure
-pub struct AppState {
+// Inner state shared between Tauri and MCP server via Arc
+pub struct AppStateInner {
     pub app_config: RwLock<AppConfig>,  // notes_folder path (stored in app data)
     pub settings: RwLock<Settings>,      // per-folder settings (stored in .scratch/)
     pub notes_cache: RwLock<HashMap<String, NoteMetadata>>,
     pub file_watcher: Mutex<Option<FileWatcherState>>,
     pub search_index: Mutex<Option<SearchIndex>>,
     pub debounce_map: Arc<Mutex<HashMap<PathBuf, Instant>>>,
+    pub mcp_server_handle: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    pub story_index: Mutex<Option<stories::StoryIndex>>,
+}
+
+// App state wrapper that is Clone-able for sharing with axum
+#[derive(Clone)]
+pub struct AppState(pub Arc<AppStateInner>);
+
+impl std::ops::Deref for AppState {
+    type Target = AppStateInner;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl Default for AppState {
     fn default() -> Self {
-        Self {
+        Self(Arc::new(AppStateInner {
             app_config: RwLock::new(AppConfig::default()),
             settings: RwLock::new(Settings::default()),
             notes_cache: RwLock::new(HashMap::new()),
             file_watcher: Mutex::new(None),
             search_index: Mutex::new(None),
             debounce_map: Arc::new(Mutex::new(HashMap::new())),
-        }
+            mcp_server_handle: Mutex::new(None),
+            story_index: Mutex::new(None),
+        }))
     }
 }
 
@@ -328,6 +345,116 @@ fn sanitize_filename(title: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+// Utility: Validate a note ID to prevent directory traversal attacks.
+fn validate_note_id(id: &str) -> Result<String, String> {
+    if id.contains('\0') {
+        return Err("Note ID contains invalid characters".to_string());
+    }
+
+    let normalized = id.replace('\\', "/");
+
+    if normalized.starts_with('/') {
+        return Err("Note ID must be a relative path".to_string());
+    }
+
+    for component in normalized.split('/') {
+        if component == ".." {
+            return Err("Note ID must not contain '..'".to_string());
+        }
+    }
+
+    let cleaned: Vec<&str> = normalized.split('/').filter(|s| !s.is_empty()).collect();
+    if cleaned.is_empty() {
+        return Err("Note ID must not be empty".to_string());
+    }
+
+    Ok(cleaned.join("/"))
+}
+
+// Utility: Resolve a note ID to a full file path within the notes folder.
+fn resolve_note_path(folder: &str, id: &str) -> Result<PathBuf, String> {
+    let validated_id = validate_note_id(id)?;
+    let path = PathBuf::from(folder).join(format!("{}.md", validated_id));
+
+    // Safety: ensure path stays within notes folder
+    let folder_path = PathBuf::from(folder);
+    let normalized_path = path
+        .components()
+        .collect::<PathBuf>();
+    let normalized_folder = folder_path
+        .components()
+        .collect::<PathBuf>();
+
+    if !normalized_path.starts_with(&normalized_folder) {
+        return Err("Path escapes notes folder".to_string());
+    }
+
+    Ok(path)
+}
+
+// Directories to skip during recursive traversal
+const EXCLUDED_DIRS: &[&str] = &[".scratch", ".git", ".assets", "assets", "node_modules"];
+
+fn should_skip_dir(name: &str) -> bool {
+    name.starts_with('.') || EXCLUDED_DIRS.contains(&name)
+}
+
+// Async recursive walk collecting all .md file paths
+fn walk_md_files<'a>(
+    base: &'a PathBuf,
+    current: &'a PathBuf,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<PathBuf>, String>> + Send + 'a>>
+{
+    Box::pin(async move {
+        let mut results = Vec::new();
+        let mut entries = fs::read_dir(current).await.map_err(|e| e.to_string())?;
+
+        while let Some(entry) = entries.next_entry().await.map_err(|e| e.to_string())? {
+            let path = entry.path();
+            let name_str = entry.file_name().to_string_lossy().to_string();
+
+            if path.is_dir() {
+                if !should_skip_dir(&name_str) {
+                    let mut sub = walk_md_files(base, &path).await?;
+                    results.append(&mut sub);
+                }
+            } else if path.extension().is_some_and(|ext| ext == "md") {
+                results.push(path);
+            }
+        }
+
+        Ok(results)
+    })
+}
+
+// Sync recursive walk for file watcher and search index
+fn walk_md_files_sync(base: &PathBuf, current: &PathBuf) -> Result<Vec<PathBuf>, String> {
+    let mut results = Vec::new();
+
+    for entry in std::fs::read_dir(current).map_err(|e| e.to_string())?.flatten() {
+        let path = entry.path();
+        let name_str = entry.file_name().to_string_lossy().to_string();
+
+        if path.is_dir() {
+            if !should_skip_dir(&name_str) {
+                let mut sub = walk_md_files_sync(base, &path)?;
+                results.append(&mut sub);
+            }
+        } else if path.extension().is_some_and(|ext| ext == "md") {
+            results.push(path);
+        }
+    }
+
+    Ok(results)
+}
+
+// Extract note ID from file path relative to notes folder base.
+fn path_to_note_id(base: &PathBuf, file_path: &PathBuf) -> Option<String> {
+    let relative = file_path.strip_prefix(base).ok()?;
+    let without_ext = relative.with_extension("");
+    Some(without_ext.to_string_lossy().replace('\\', "/"))
 }
 
 // Utility: Check if a string is effectively empty
@@ -602,8 +729,11 @@ fn set_notes_folder(app: AppHandle, path: String, state: State<AppState>) -> Res
     Ok(())
 }
 
-#[tauri::command]
-async fn list_notes(state: State<'_, AppState>) -> Result<Vec<NoteMetadata>, String> {
+pub async fn list_notes_impl(
+    state: &AppState,
+    folder_filter: Option<&str>,
+    recursive: bool,
+) -> Result<Vec<NoteMetadata>, String> {
     let folder = {
         let app_config = state.app_config.read().expect("app_config read lock");
         app_config
@@ -612,41 +742,75 @@ async fn list_notes(state: State<'_, AppState>) -> Result<Vec<NoteMetadata>, Str
             .ok_or("Notes folder not set")?
     };
 
-    let path = PathBuf::from(&folder);
-    if !path.exists() {
+    let base_path = PathBuf::from(&folder);
+    if !base_path.exists() {
         return Ok(vec![]);
     }
 
+    // Determine scan directory
+    let scan_path = if let Some(sub) = folder_filter {
+        let validated = validate_note_id(sub)?;
+        let p = base_path.join(&validated);
+        if !p.exists() || !p.is_dir() {
+            return Err(format!("Folder not found: {}", sub));
+        }
+        p
+    } else {
+        base_path.clone()
+    };
+
     let mut notes: Vec<NoteMetadata> = Vec::new();
 
-    // Use tokio for async file reading
-    let mut entries = fs::read_dir(&path).await.map_err(|e| e.to_string())?;
+    if recursive {
+        // Recursive walk
+        let files = walk_md_files(&base_path, &scan_path).await?;
+        for file_path in files {
+            if let Ok(content) = fs::read_to_string(&file_path).await {
+                let modified = fs::metadata(&file_path)
+                    .await
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
 
-    while let Some(entry) = entries.next_entry().await.map_err(|e| e.to_string())? {
-        let file_path = entry.path();
-        if file_path.extension().is_some_and(|ext| ext == "md") {
-            // Get metadata first (single syscall)
-            if let Ok(metadata) = entry.metadata().await {
-                if let Ok(content) = fs::read_to_string(&file_path).await {
-                    let modified = metadata
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| d.as_secs() as i64)
-                        .unwrap_or(0);
+                let id = path_to_note_id(&base_path, &file_path)
+                    .unwrap_or_else(|| "unknown".to_string());
 
-                    let id = file_path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("unknown")
-                        .to_string();
+                notes.push(NoteMetadata {
+                    id,
+                    title: extract_title(&content),
+                    preview: generate_preview(&content),
+                    modified,
+                });
+            }
+        }
+    } else {
+        // Non-recursive (original behavior)
+        let mut entries = fs::read_dir(&scan_path).await.map_err(|e| e.to_string())?;
 
-                    notes.push(NoteMetadata {
-                        id,
-                        title: extract_title(&content),
-                        preview: generate_preview(&content),
-                        modified,
-                    });
+        while let Some(entry) = entries.next_entry().await.map_err(|e| e.to_string())? {
+            let file_path = entry.path();
+            if file_path.extension().is_some_and(|ext| ext == "md") {
+                if let Ok(metadata) = entry.metadata().await {
+                    if let Ok(content) = fs::read_to_string(&file_path).await {
+                        let modified = metadata
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs() as i64)
+                            .unwrap_or(0);
+
+                        let id = path_to_note_id(&base_path, &file_path)
+                            .unwrap_or_else(|| "unknown".to_string());
+
+                        notes.push(NoteMetadata {
+                            id,
+                            title: extract_title(&content),
+                            preview: generate_preview(&content),
+                            modified,
+                        });
+                    }
                 }
             }
         }
@@ -668,9 +832,9 @@ async fn list_notes(state: State<'_, AppState>) -> Result<Vec<NoteMetadata>, Str
         let b_pinned = pinned_ids.contains(&b.id);
 
         match (a_pinned, b_pinned) {
-            (true, false) => std::cmp::Ordering::Less,    // a pinned, b not -> a first
-            (false, true) => std::cmp::Ordering::Greater, // b pinned, a not -> b first
-            _ => b.modified.cmp(&a.modified),             // both same status -> sort by date (newest first)
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => b.modified.cmp(&a.modified),
         }
     });
 
@@ -687,7 +851,11 @@ async fn list_notes(state: State<'_, AppState>) -> Result<Vec<NoteMetadata>, Str
 }
 
 #[tauri::command]
-async fn read_note(id: String, state: State<'_, AppState>) -> Result<Note, String> {
+async fn list_notes(state: State<'_, AppState>) -> Result<Vec<NoteMetadata>, String> {
+    list_notes_impl(&state, None, false).await
+}
+
+pub async fn read_note_impl(id: String, state: &AppState) -> Result<Note, String> {
     let folder = {
         let app_config = state.app_config.read().expect("app_config read lock");
         app_config
@@ -696,7 +864,7 @@ async fn read_note(id: String, state: State<'_, AppState>) -> Result<Note, Strin
             .ok_or("Notes folder not set")?
     };
 
-    let file_path = PathBuf::from(&folder).join(format!("{}.md", id));
+    let file_path = resolve_note_path(&folder, &id)?;
     if !file_path.exists() {
         return Err("Note not found".to_string());
     }
@@ -725,10 +893,14 @@ async fn read_note(id: String, state: State<'_, AppState>) -> Result<Note, Strin
 }
 
 #[tauri::command]
-async fn save_note(
+async fn read_note(id: String, state: State<'_, AppState>) -> Result<Note, String> {
+    read_note_impl(id, &state).await
+}
+
+pub async fn save_note_impl(
     id: Option<String>,
     content: String,
-    state: State<'_, AppState>,
+    state: &AppState,
 ) -> Result<Note, String> {
     let folder = {
         let app_config = state.app_config.read().expect("app_config read lock");
@@ -740,40 +912,78 @@ async fn save_note(
     let folder_path = PathBuf::from(&folder);
 
     let title = extract_title(&content);
-    let desired_id = sanitize_filename(&title);
+    let desired_basename = sanitize_filename(&title);
+
+    // Extract folder prefix from existing ID (e.g., "projects/todo" -> "projects/")
+    // so renames stay within the same subfolder
+    let folder_prefix = id.as_ref().and_then(|existing| {
+        existing.rfind('/').map(|pos| existing[..=pos].to_string())
+    });
+
+    let _desired_id = if let Some(ref prefix) = folder_prefix {
+        format!("{}{}", prefix, desired_basename)
+    } else {
+        desired_basename.clone()
+    };
+
+    // The directory where this note lives
+    let note_dir = if let Some(ref prefix) = folder_prefix {
+        let trimmed = prefix.trim_end_matches('/');
+        folder_path.join(trimmed)
+    } else {
+        folder_path.clone()
+    };
 
     // Determine the file ID and path, handling renames
     let (final_id, file_path, old_id) = if let Some(existing_id) = id {
-        let old_file_path = folder_path.join(format!("{}.md", existing_id));
+        let old_file_path = resolve_note_path(&folder, &existing_id)?;
 
-        // Check if we should rename the file
-        if existing_id != desired_id {
+        // Compare just the basename portions for rename detection
+        let existing_basename = existing_id.rsplit('/').next().unwrap_or(&existing_id);
+
+        if existing_basename != desired_basename {
             // Find a unique name for the new ID
-            let mut new_id = desired_id.clone();
+            let mut new_basename = desired_basename.clone();
             let mut counter = 1;
 
-            while new_id != existing_id && folder_path.join(format!("{}.md", new_id)).exists() {
-                new_id = format!("{}-{}", desired_id, counter);
+            let new_full_id = |base: &str| -> String {
+                if let Some(ref prefix) = folder_prefix {
+                    format!("{}{}", prefix, base)
+                } else {
+                    base.to_string()
+                }
+            };
+
+            while new_full_id(&new_basename) != existing_id
+                && note_dir.join(format!("{}.md", new_basename)).exists()
+            {
+                new_basename = format!("{}-{}", desired_basename, counter);
                 counter += 1;
             }
 
-            let new_file_path = folder_path.join(format!("{}.md", new_id));
-            // Track old_file_path for cleanup after successful write
+            let new_id = new_full_id(&new_basename);
+            let new_file_path = note_dir.join(format!("{}.md", new_basename));
             (new_id, new_file_path, Some((existing_id, old_file_path)))
         } else {
             (existing_id, old_file_path, None)
         }
     } else {
         // New note - generate unique ID from title
-        let mut new_id = desired_id.clone();
+        let mut new_basename = desired_basename.clone();
         let mut counter = 1;
 
-        while folder_path.join(format!("{}.md", new_id)).exists() {
-            new_id = format!("{}-{}", desired_id, counter);
+        while note_dir.join(format!("{}.md", new_basename)).exists() {
+            new_basename = format!("{}-{}", desired_basename, counter);
             counter += 1;
         }
 
-        (new_id.clone(), folder_path.join(format!("{}.md", new_id)), None)
+        let new_id = if let Some(ref prefix) = folder_prefix {
+            format!("{}{}", prefix, new_basename)
+        } else {
+            new_basename.clone()
+        };
+
+        (new_id, note_dir.join(format!("{}.md", new_basename)), None)
     };
 
     // Write the file to the new path
@@ -825,7 +1035,15 @@ async fn save_note(
 }
 
 #[tauri::command]
-async fn delete_note(id: String, state: State<'_, AppState>) -> Result<(), String> {
+async fn save_note(
+    id: Option<String>,
+    content: String,
+    state: State<'_, AppState>,
+) -> Result<Note, String> {
+    save_note_impl(id, content, &state).await
+}
+
+pub async fn delete_note_impl(id: String, state: &AppState) -> Result<(), String> {
     let folder = {
         let app_config = state.app_config.read().expect("app_config read lock");
         app_config
@@ -834,7 +1052,7 @@ async fn delete_note(id: String, state: State<'_, AppState>) -> Result<(), Strin
             .ok_or("Notes folder not set")?
     };
 
-    let file_path = PathBuf::from(&folder).join(format!("{}.md", id));
+    let file_path = resolve_note_path(&folder, &id)?;
     if file_path.exists() {
         fs::remove_file(&file_path)
             .await
@@ -859,7 +1077,14 @@ async fn delete_note(id: String, state: State<'_, AppState>) -> Result<(), Strin
 }
 
 #[tauri::command]
-async fn create_note(state: State<'_, AppState>) -> Result<Note, String> {
+async fn delete_note(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    delete_note_impl(id, &state).await
+}
+
+pub async fn create_note_impl(
+    subfolder: Option<String>,
+    state: &AppState,
+) -> Result<Note, String> {
     let folder = {
         let app_config = state.app_config.read().expect("app_config read lock");
         app_config
@@ -869,18 +1094,31 @@ async fn create_note(state: State<'_, AppState>) -> Result<Note, String> {
     };
     let folder_path = PathBuf::from(&folder);
 
+    // Determine target directory and ID prefix
+    let (target_dir, id_prefix) = if let Some(ref sub) = subfolder {
+        let validated = validate_note_id(sub)?;
+        let p = folder_path.join(&validated);
+        if !p.exists() || !p.is_dir() {
+            return Err(format!("Folder not found: {}", sub));
+        }
+        (p, format!("{}/", validated))
+    } else {
+        (folder_path.clone(), String::new())
+    };
+
     // Generate unique ID
-    let base_id = "untitled";
-    let mut final_id = base_id.to_string();
+    let base_name = "untitled";
+    let mut file_name = base_name.to_string();
     let mut counter = 1;
 
-    while folder_path.join(format!("{}.md", final_id)).exists() {
-        final_id = format!("{}-{}", base_id, counter);
+    while target_dir.join(format!("{}.md", file_name)).exists() {
+        file_name = format!("{}-{}", base_name, counter);
         counter += 1;
     }
 
+    let final_id = format!("{}{}", id_prefix, file_name);
     let content = "# Untitled\n\n".to_string();
-    let file_path = folder_path.join(format!("{}.md", &final_id));
+    let file_path = target_dir.join(format!("{}.md", &file_name));
 
     fs::write(&file_path, &content)
         .await
@@ -909,14 +1147,599 @@ async fn create_note(state: State<'_, AppState>) -> Result<Note, String> {
 }
 
 #[tauri::command]
-fn get_settings(state: State<AppState>) -> Settings {
+async fn create_note(state: State<'_, AppState>) -> Result<Note, String> {
+    create_note_impl(None, &state).await
+}
+
+// List folders under the notes root, optionally under a parent folder.
+pub async fn list_folders_impl(
+    parent: Option<String>,
+    state: &AppState,
+) -> Result<Vec<String>, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+
+    let base_path = PathBuf::from(&folder);
+    let scan_path = if let Some(ref parent_id) = parent {
+        let validated = validate_note_id(parent_id)?;
+        let p = base_path.join(&validated);
+        if !p.exists() || !p.is_dir() {
+            return Err(format!("Folder not found: {}", parent_id));
+        }
+        p
+    } else {
+        base_path.clone()
+    };
+
+    let mut folders = Vec::new();
+    let mut entries = fs::read_dir(&scan_path).await.map_err(|e| e.to_string())?;
+
+    while let Some(entry) = entries.next_entry().await.map_err(|e| e.to_string())? {
+        let path = entry.path();
+        if path.is_dir() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !should_skip_dir(&name) {
+                if let Ok(rel) = path.strip_prefix(&base_path) {
+                    folders.push(rel.to_string_lossy().replace('\\', "/"));
+                }
+            }
+        }
+    }
+
+    folders.sort();
+    Ok(folders)
+}
+
+// Create a new folder under the notes root.
+pub async fn create_folder_impl(
+    folder_path_str: String,
+    state: &AppState,
+) -> Result<String, String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+
+    let validated = validate_note_id(&folder_path_str)?;
+    let full_path = PathBuf::from(&notes_folder).join(&validated);
+
+    // Safety: ensure path stays within notes folder
+    let base = PathBuf::from(&notes_folder);
+    let normalized = full_path.components().collect::<PathBuf>();
+    let normalized_base = base.components().collect::<PathBuf>();
+    if !normalized.starts_with(&normalized_base) {
+        return Err("Path escapes notes folder".to_string());
+    }
+
+    fs::create_dir_all(&full_path)
+        .await
+        .map_err(|e| format!("Failed to create folder: {}", e))?;
+
+    Ok(validated)
+}
+
+// Move a note to a different folder.
+pub async fn move_note_impl(
+    id: String,
+    destination: String,
+    state: &AppState,
+) -> Result<Note, String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+
+    let source_path = resolve_note_path(&notes_folder, &id)?;
+    if !source_path.exists() {
+        return Err(format!("Note not found: {}", id));
+    }
+
+    // Resolve destination: "." means root folder
+    let base_path = PathBuf::from(&notes_folder);
+    let dest_dir = if destination == "." {
+        base_path.clone()
+    } else {
+        let validated = validate_note_id(&destination)?;
+        let p = base_path.join(&validated);
+        if !p.exists() || !p.is_dir() {
+            return Err(format!("Destination folder not found: {}", destination));
+        }
+        p
+    };
+
+    let file_name = source_path
+        .file_name()
+        .ok_or("Invalid source path")?
+        .to_string_lossy()
+        .to_string();
+
+    let dest_path = dest_dir.join(&file_name);
+    if dest_path.exists() {
+        return Err(format!(
+            "A note with the same name already exists in {}",
+            destination
+        ));
+    }
+
+    // Perform the move
+    fs::rename(&source_path, &dest_path)
+        .await
+        .map_err(|e| format!("Failed to move note: {}", e))?;
+
+    // Calculate new ID
+    let new_id = path_to_note_id(&base_path, &dest_path)
+        .ok_or("Failed to compute new note ID")?;
+
+    // Read content for search index
+    let content = fs::read_to_string(&dest_path)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Compute metadata before acquiring mutex
+    let title = extract_title(&content);
+    let modified = fs::metadata(&dest_path)
+        .await
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    // Update search index: delete old, add new
+    {
+        let index = state.search_index.lock().expect("search index mutex");
+        if let Some(ref search_index) = *index {
+            let _ = search_index.delete_note(&id);
+            let _ = search_index.index_note(&new_id, &title, &content, modified);
+        }
+    }
+
+    // Update cache
+    {
+        let mut cache = state.notes_cache.write().expect("cache write lock");
+        cache.remove(&id);
+    }
+
+    read_note_impl(new_id, state).await
+}
+
+// --- Power Search & File Operations ---
+
+/// Levenshtein edit distance between two strings.
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let a_len = a_chars.len();
+    let b_len = b_chars.len();
+    if a_len == 0 {
+        return b_len;
+    }
+    if b_len == 0 {
+        return a_len;
+    }
+
+    let mut prev = (0..=b_len).collect::<Vec<_>>();
+    let mut curr = vec![0; b_len + 1];
+
+    for i in 1..=a_len {
+        curr[0] = i;
+        for j in 1..=b_len {
+            let cost = if a_chars[i - 1] == b_chars[j - 1] {
+                0
+            } else {
+                1
+            };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+
+    prev[b_len]
+}
+
+/// Compute best fuzzy match score for `query` within `text` (word-level).
+/// Returns (best_distance, best_matching_fragment) or None if no match within threshold.
+fn fuzzy_match_line(query: &str, line: &str, max_distance: usize, case_sensitive: bool) -> Option<(usize, usize, usize)> {
+    let q = if case_sensitive { query.to_string() } else { query.to_lowercase() };
+    let l = if case_sensitive { line.to_string() } else { line.to_lowercase() };
+
+    let q_len = q.chars().count();
+    if q_len == 0 {
+        return None;
+    }
+
+    // Sliding window over text at character level
+    let l_chars: Vec<char> = l.chars().collect();
+    let l_len = l_chars.len();
+    if l_len == 0 {
+        return None;
+    }
+
+    let mut best: Option<(usize, usize, usize)> = None; // (distance, byte_start, byte_end)
+
+    // Check windows of size q_len-max_distance .. q_len+max_distance
+    let min_win = if q_len > max_distance { q_len - max_distance } else { 1 };
+    let max_win = (q_len + max_distance).min(l_len);
+
+    for win_size in min_win..=max_win {
+        for start in 0..=(l_len.saturating_sub(win_size)) {
+            let window: String = l_chars[start..start + win_size].iter().collect();
+            let dist = levenshtein_distance(&q, &window);
+            if dist <= max_distance {
+                // Convert char positions to byte offsets in original line
+                let byte_start: usize = line.chars().take(start).map(|c| c.len_utf8()).sum();
+                let byte_end: usize = line.chars().take(start + win_size).map(|c| c.len_utf8()).sum();
+                match best {
+                    Some((d, _, _)) if dist < d => best = Some((dist, byte_start, byte_end)),
+                    None => best = Some((dist, byte_start, byte_end)),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    best
+}
+
+/// List directory contents within the notes folder.
+pub async fn list_directory_impl(
+    path: Option<String>,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config
+            .notes_folder
+            .clone()
+            .ok_or("Notes folder not set")?
+    };
+
+    let base = PathBuf::from(&notes_folder);
+    let target = if let Some(ref p) = path {
+        let validated = validate_note_id(p)?;
+        let full = base.join(&validated);
+        if !full.starts_with(&base) {
+            return Err("Path escapes notes folder".to_string());
+        }
+        full
+    } else {
+        base.clone()
+    };
+
+    if !target.exists() || !target.is_dir() {
+        return Err(format!("Directory not found: {}", path.unwrap_or_default()));
+    }
+
+    let mut dirs = Vec::new();
+    let mut files = Vec::new();
+
+    let mut entries = fs::read_dir(&target).await.map_err(|e| e.to_string())?;
+    while let Some(entry) = entries.next_entry().await.map_err(|e| e.to_string())? {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let path = entry.path();
+
+        if name.starts_with('.') {
+            continue;
+        }
+
+        if path.is_dir() {
+            if !should_skip_dir(&name) {
+                let rel = path
+                    .strip_prefix(&base)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or(name.clone());
+                dirs.push(serde_json::json!({ "name": name, "path": rel }));
+            }
+        } else {
+            let meta = fs::metadata(&path).await.ok();
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let modified = meta
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            let rel = path
+                .strip_prefix(&base)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or(name.clone());
+            files.push(serde_json::json!({
+                "name": name,
+                "path": rel,
+                "size": size,
+                "modified": modified
+            }));
+        }
+    }
+
+    Ok(serde_json::json!({
+        "directory": path.unwrap_or_else(|| ".".to_string()),
+        "directories": dirs,
+        "files": files,
+        "total_directories": dirs.len(),
+        "total_files": files.len()
+    }))
+}
+
+/// Read any file within the notes folder.
+pub async fn read_file_impl(
+    path: String,
+    state: &AppState,
+) -> Result<String, String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config
+            .notes_folder
+            .clone()
+            .ok_or("Notes folder not set")?
+    };
+
+    let base = PathBuf::from(&notes_folder);
+    let validated = validate_note_id(&path)?;
+    let full_path = base.join(&validated);
+
+    if !full_path.starts_with(&base) {
+        return Err("Path escapes notes folder".to_string());
+    }
+    if !full_path.exists() {
+        return Err(format!("File not found: {}", path));
+    }
+    if full_path.is_dir() {
+        return Err("Path is a directory, not a file".to_string());
+    }
+
+    fs::read_to_string(&full_path)
+        .await
+        .map_err(|e| format!("Failed to read file: {}", e))
+}
+
+/// Powerful find across notes with exact, fuzzy, and regex modes.
+pub async fn find_in_notes_impl(
+    query: String,
+    mode: String,
+    note_id: Option<String>,
+    case_sensitive: bool,
+    context_lines: usize,
+    max_distance: Option<usize>,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config
+            .notes_folder
+            .clone()
+            .ok_or("Notes folder not set")?
+    };
+
+    let base = PathBuf::from(&notes_folder);
+
+    // Collect files to search
+    let files_to_search: Vec<(String, PathBuf)> = if let Some(ref nid) = note_id {
+        let path = resolve_note_path(&notes_folder, nid)?;
+        if !path.exists() {
+            return Err(format!("Note not found: {}", nid));
+        }
+        vec![(nid.clone(), path)]
+    } else {
+        let all_files = walk_md_files(&base, &base).await?;
+        all_files
+            .into_iter()
+            .filter_map(|p| {
+                path_to_note_id(&base, &p).map(|id| (id, p))
+            })
+            .collect()
+    };
+
+    // Compile regex if needed
+    let compiled_regex = if mode == "regex" {
+        Some(
+            regex::RegexBuilder::new(&query)
+                .case_insensitive(!case_sensitive)
+                .build()
+                .map_err(|e| format!("Invalid regex: {}", e))?,
+        )
+    } else {
+        None
+    };
+
+    let max_dist = max_distance.unwrap_or_else(|| {
+        // Default: ~30% of query length, minimum 2
+        (query.chars().count() / 3).max(2)
+    });
+
+    let mut all_matches = Vec::new();
+    let notes_searched = files_to_search.len();
+
+    for (note_id, file_path) in &files_to_search {
+        let content = match fs::read_to_string(file_path).await {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let lines: Vec<&str> = content.lines().collect();
+        let title = extract_title(&content);
+
+        for (line_idx, line) in lines.iter().enumerate() {
+            let match_info: Option<(usize, usize, f64)> = match mode.as_str() {
+                "exact" => {
+                    if case_sensitive {
+                        line.find(&query).map(|pos| (pos, pos + query.len(), 1.0))
+                    } else {
+                        line.to_lowercase()
+                            .find(&query.to_lowercase())
+                            .map(|pos| (pos, pos + query.len(), 1.0))
+                    }
+                }
+                "fuzzy" => fuzzy_match_line(&query, line, max_dist, case_sensitive)
+                    .map(|(dist, start, end)| {
+                        let similarity = 1.0
+                            - (dist as f64 / query.chars().count().max(1) as f64);
+                        (start, end, similarity)
+                    }),
+                "regex" => {
+                    if let Some(ref re) = compiled_regex {
+                        re.find(line).map(|m| (m.start(), m.end(), 1.0))
+                    } else {
+                        None
+                    }
+                }
+                _ => return Err(format!("Unknown search mode: {}. Use 'exact', 'fuzzy', or 'regex'.", mode)),
+            };
+
+            if let Some((match_start, match_end, similarity)) = match_info {
+                let ctx_start = line_idx.saturating_sub(context_lines);
+                let ctx_end = (line_idx + context_lines + 1).min(lines.len());
+
+                let context_before: Vec<String> = lines[ctx_start..line_idx]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect();
+                let context_after: Vec<String> = lines[(line_idx + 1)..ctx_end]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect();
+
+                let matched_text = if match_end <= line.len() {
+                    &line[match_start..match_end]
+                } else {
+                    ""
+                };
+
+                all_matches.push(serde_json::json!({
+                    "note_id": note_id,
+                    "note_title": title,
+                    "line_number": line_idx + 1,
+                    "line_content": line,
+                    "match_start": match_start,
+                    "match_end": match_end,
+                    "matched_text": matched_text,
+                    "similarity": similarity,
+                    "context_before": context_before,
+                    "context_after": context_after
+                }));
+            }
+        }
+    }
+
+    // Sort by similarity descending
+    all_matches.sort_by(|a, b| {
+        let sa = a.get("similarity").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let sb = b.get("similarity").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    Ok(serde_json::json!({
+        "query": query,
+        "mode": mode,
+        "total_matches": all_matches.len(),
+        "notes_searched": notes_searched,
+        "matches": all_matches
+    }))
+}
+
+/// Replace text within a note. Supports first, all, and regex modes.
+pub async fn replace_in_note_impl(
+    id: String,
+    find: String,
+    replace_with: String,
+    mode: String,
+    case_sensitive: bool,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config
+            .notes_folder
+            .clone()
+            .ok_or("Notes folder not set")?
+    };
+
+    let file_path = resolve_note_path(&notes_folder, &id)?;
+    if !file_path.exists() {
+        return Err(format!("Note not found: {}", id));
+    }
+
+    let content = fs::read_to_string(&file_path)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let (new_content, count) = match mode.as_str() {
+        "first" => {
+            if case_sensitive {
+                if let Some(pos) = content.find(&find) {
+                    let mut result = String::with_capacity(content.len());
+                    result.push_str(&content[..pos]);
+                    result.push_str(&replace_with);
+                    result.push_str(&content[pos + find.len()..]);
+                    (result, 1)
+                } else {
+                    (content.clone(), 0)
+                }
+            } else {
+                let lower_content = content.to_lowercase();
+                let lower_find = find.to_lowercase();
+                if let Some(pos) = lower_content.find(&lower_find) {
+                    let mut result = String::with_capacity(content.len());
+                    result.push_str(&content[..pos]);
+                    result.push_str(&replace_with);
+                    result.push_str(&content[pos + find.len()..]);
+                    (result, 1)
+                } else {
+                    (content.clone(), 0)
+                }
+            }
+        }
+        "all" => {
+            if case_sensitive {
+                let count = content.matches(&find).count();
+                (content.replace(&find, &replace_with), count)
+            } else {
+                // Case-insensitive replace all
+                let re = regex::RegexBuilder::new(&regex::escape(&find))
+                    .case_insensitive(true)
+                    .build()
+                    .map_err(|e| format!("Failed to build pattern: {}", e))?;
+                let count = re.find_iter(&content).count();
+                (re.replace_all(&content, replace_with.as_str()).to_string(), count)
+            }
+        }
+        "regex" => {
+            let re = regex::RegexBuilder::new(&find)
+                .case_insensitive(!case_sensitive)
+                .build()
+                .map_err(|e| format!("Invalid regex: {}", e))?;
+            let count = re.find_iter(&content).count();
+            (re.replace_all(&content, replace_with.as_str()).to_string(), count)
+        }
+        _ => return Err(format!("Unknown replace mode: {}. Use 'first', 'all', or 'regex'.", mode)),
+    };
+
+    if count == 0 {
+        return Ok(serde_json::json!({
+            "note_id": id,
+            "replacements_made": 0,
+            "message": "No matches found"
+        }));
+    }
+
+    // Save the updated content
+    let note = save_note_impl(Some(id.clone()), new_content, state).await?;
+
+    Ok(serde_json::json!({
+        "note_id": note.id,
+        "replacements_made": count,
+        "note": note
+    }))
+}
+
+pub fn get_settings_impl(state: &AppState) -> Settings {
     state.settings.read().expect("settings read lock").clone()
 }
 
-#[tauri::command]
-fn update_settings(
+pub fn update_settings_impl(
     new_settings: Settings,
-    state: State<AppState>,
+    state: &AppState,
 ) -> Result<(), String> {
     let folder = {
         let app_config = state.app_config.read().expect("app_config read lock");
@@ -935,7 +1758,19 @@ fn update_settings(
 }
 
 #[tauri::command]
-async fn search_notes(query: String, state: State<'_, AppState>) -> Result<Vec<SearchResult>, String> {
+fn get_settings(state: State<AppState>) -> Settings {
+    get_settings_impl(&state)
+}
+
+#[tauri::command]
+fn update_settings(
+    new_settings: Settings,
+    state: State<AppState>,
+) -> Result<(), String> {
+    update_settings_impl(new_settings, &state)
+}
+
+pub async fn search_notes_impl(query: String, state: &AppState) -> Result<Vec<SearchResult>, String> {
     if query.trim().is_empty() {
         return Ok(vec![]);
     }
@@ -954,12 +1789,17 @@ async fn search_notes(query: String, state: State<'_, AppState>) -> Result<Vec<S
         result
     } else {
         // Fallback to simple search if index not available
-        fallback_search(&query, &state).await
+        fallback_search(&query, state).await
     }
 }
 
+#[tauri::command]
+async fn search_notes(query: String, state: State<'_, AppState>) -> Result<Vec<SearchResult>, String> {
+    search_notes_impl(query, &state).await
+}
+
 // Fallback search when Tantivy index isn't available - searches title and full content
-async fn fallback_search(query: &str, state: &State<'_, AppState>) -> Result<Vec<SearchResult>, String> {
+async fn fallback_search(query: &str, state: &AppState) -> Result<Vec<SearchResult>, String> {
     let folder = {
         let app_config = state.app_config.read().expect("app_config read lock");
         app_config.notes_folder.clone()
@@ -1028,6 +1868,544 @@ async fn fallback_search(query: &str, state: &State<'_, AppState>) -> Result<Vec
     Ok(results)
 }
 
+// --- Stories _impl functions ---
+
+pub async fn epics_list_impl(
+    base_path: Option<String>,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+
+    let search_path = if let Some(bp) = base_path {
+        PathBuf::from(&folder).join(&bp)
+    } else {
+        PathBuf::from(&folder)
+    };
+
+    let epics = stories::scan_epics(&search_path)?;
+    Ok(serde_json::json!({ "epics": epics }))
+}
+
+pub async fn boards_get_impl(
+    epic_id: String,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+
+    let epic_folder = stories::find_epic_folder(&PathBuf::from(&folder), &epic_id)?;
+    let all_stories = stories::scan_stories_in_epic(&epic_folder)?;
+
+    let mut lanes: Vec<serde_json::Value> = Vec::new();
+    for lane_name in stories::StoryStatus::all_lanes() {
+        let cards: Vec<serde_json::Value> = all_stories
+            .iter()
+            .filter(|s| s.frontmatter.status.as_str() == lane_name)
+            .map(|s| {
+                let card = stories::story_to_card(s);
+                serde_json::to_value(&card).unwrap_or_default()
+            })
+            .collect();
+
+        lanes.push(serde_json::json!({
+            "status": lane_name,
+            "cards": cards,
+        }));
+    }
+
+    Ok(serde_json::json!({
+        "epicId": epic_id,
+        "lanes": lanes,
+        "generatedAt": stories::now_iso8601(),
+    }))
+}
+
+pub async fn stories_list_impl(
+    epic_id: Option<String>,
+    status: Option<String>,
+    tag: Option<String>,
+    owner: Option<String>,
+    text: Option<String>,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+    let notes_folder = PathBuf::from(&folder);
+
+    let mut all_stories: Vec<stories::Story> = Vec::new();
+
+    if let Some(ref eid) = epic_id {
+        let epic_folder = stories::find_epic_folder(&notes_folder, eid)?;
+        all_stories = stories::scan_stories_in_epic(&epic_folder)?;
+    } else {
+        // Scan all epics recursively
+        fn collect_epics(dir: &std::path::Path, all: &mut Vec<stories::Story>) {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                        if name.starts_with("E-") {
+                            if let Ok(stories) = stories::scan_stories_in_epic(&entry.path()) {
+                                all.extend(stories);
+                            }
+                        } else if !name.starts_with('.') {
+                            collect_epics(&entry.path(), all);
+                        }
+                    }
+                }
+            }
+        }
+        collect_epics(&notes_folder, &mut all_stories);
+    }
+
+    // Apply filters
+    if let Some(ref s) = status {
+        let target = stories::StoryStatus::from_str(s)?;
+        all_stories.retain(|story| story.frontmatter.status == target);
+    }
+    if let Some(ref t) = tag {
+        let t_lower = t.to_lowercase();
+        all_stories.retain(|story| {
+            story
+                .frontmatter
+                .tags
+                .as_ref()
+                .map(|tags| tags.iter().any(|tg| tg.to_lowercase() == t_lower))
+                .unwrap_or(false)
+        });
+    }
+    if let Some(ref o) = owner {
+        let o_lower = o.to_lowercase();
+        all_stories.retain(|story| {
+            story
+                .frontmatter
+                .owner
+                .as_ref()
+                .map(|ow| ow.to_lowercase() == o_lower)
+                .unwrap_or(false)
+        });
+    }
+    if let Some(ref txt) = text {
+        let t_lower = txt.to_lowercase();
+        all_stories.retain(|story| {
+            story.frontmatter.title.to_lowercase().contains(&t_lower)
+                || story.markdown_body.to_lowercase().contains(&t_lower)
+        });
+    }
+
+    let result: Vec<serde_json::Value> = all_stories
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "id": s.frontmatter.id,
+                "epic": s.frontmatter.epic,
+                "title": s.frontmatter.title,
+                "status": s.frontmatter.status,
+                "owner": s.frontmatter.owner,
+                "estimate_points": s.frontmatter.estimate_points,
+                "tags": s.frontmatter.tags.clone().unwrap_or_default(),
+                "links": s.frontmatter.links,
+                "path": s.path,
+                "updated_at": s.frontmatter.timestamps.updated_at,
+            })
+        })
+        .collect();
+
+    Ok(serde_json::json!({ "stories": result }))
+}
+
+pub async fn stories_get_impl(
+    id: String,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+
+    let file_path = stories::find_story_file(&PathBuf::from(&folder), &id)?;
+    let content = tokio::fs::read_to_string(&file_path)
+        .await
+        .map_err(|e| format!("Failed to read story file: {}", e))?;
+
+    let story = stories::parse_story_file(&content, &file_path.to_string_lossy())?;
+
+    Ok(serde_json::json!({
+        "story": {
+            "frontmatter": story.frontmatter,
+            "markdownBody": story.markdown_body,
+            "path": story.path,
+            "etag": story.etag,
+        }
+    }))
+}
+
+pub async fn stories_create_impl(
+    epic_id: String,
+    title: String,
+    status: Option<String>,
+    owner: Option<String>,
+    estimate_points: Option<f64>,
+    tags: Option<Vec<String>>,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+    let notes_folder = PathBuf::from(&folder);
+
+    let epic_folder = stories::find_epic_folder(&notes_folder, &epic_id)?;
+    let stories_dir = epic_folder.join("stories");
+    tokio::fs::create_dir_all(&stories_dir)
+        .await
+        .map_err(|e| format!("Failed to create stories directory: {}", e))?;
+
+    // Get existing story IDs to determine next sequence
+    let existing = stories::scan_stories_in_epic(&epic_folder)?;
+    let existing_ids: Vec<&str> = existing.iter().map(|s| s.frontmatter.id.as_str()).collect();
+    let new_id = stories::next_story_id(&epic_id, &existing_ids);
+
+    let story_status = if let Some(ref s) = status {
+        stories::StoryStatus::from_str(s)?
+    } else {
+        stories::StoryStatus::Backlog
+    };
+
+    let now = stories::now_iso8601();
+    let fm = stories::StoryFrontmatter {
+        id: new_id.clone(),
+        epic: epic_id.clone(),
+        title: title.clone(),
+        status: story_status,
+        owner,
+        estimate_points,
+        tags,
+        links: None,
+        timestamps: stories::StoryTimestamps {
+            created_at: now.clone(),
+            updated_at: now,
+        },
+    };
+
+    let body = stories::default_story_body();
+    let content = stories::serialize_story(&fm, &body);
+    let filename = stories::story_filename(&new_id, &title);
+    let file_path = stories_dir.join(&filename);
+
+    tokio::fs::write(&file_path, &content)
+        .await
+        .map_err(|e| format!("Failed to write story file: {}", e))?;
+
+    let rel_path = file_path.to_string_lossy().to_string();
+
+    // Audit log
+    let _ = stories::append_audit_event(
+        &notes_folder,
+        "stories.create",
+        &new_id,
+        None,
+        Some(serde_json::json!({ "title": title, "epic": epic_id })),
+    );
+
+    Ok(serde_json::json!({
+        "story": {
+            "id": new_id,
+            "path": rel_path,
+        }
+    }))
+}
+
+pub async fn stories_update_impl(
+    id: String,
+    etag: String,
+    patch: Option<serde_json::Value>,
+    markdown_body: Option<String>,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+    let notes_folder = PathBuf::from(&folder);
+
+    let file_path = stories::find_story_file(&notes_folder, &id)?;
+    let content = tokio::fs::read_to_string(&file_path)
+        .await
+        .map_err(|e| format!("Failed to read story file: {}", e))?;
+
+    let current_etag = stories::compute_etag(&content);
+    if current_etag != etag {
+        return Err(format!(
+            "CONFLICT: etag mismatch. Expected '{}', got '{}'. Refetch the story to get the latest etag.",
+            etag, current_etag
+        ));
+    }
+
+    let mut story = stories::parse_story_file(&content, &file_path.to_string_lossy())?;
+    let before = serde_json::to_value(&story.frontmatter).ok();
+
+    // Apply patch to frontmatter
+    if let Some(ref p) = patch {
+        if let Some(title) = p.get("title").and_then(|v| v.as_str()) {
+            story.frontmatter.title = title.to_string();
+        }
+        if let Some(status) = p.get("status").and_then(|v| v.as_str()) {
+            story.frontmatter.status = stories::StoryStatus::from_str(status)?;
+        }
+        if let Some(owner) = p.get("owner").and_then(|v| v.as_str()) {
+            story.frontmatter.owner = Some(owner.to_string());
+        }
+        if let Some(pts) = p.get("estimate_points").and_then(|v| v.as_f64()) {
+            story.frontmatter.estimate_points = Some(pts);
+        }
+        if let Some(tags) = p.get("tags").and_then(|v| v.as_array()) {
+            story.frontmatter.tags = Some(
+                tags.iter()
+                    .filter_map(|t| t.as_str().map(String::from))
+                    .collect(),
+            );
+        }
+        if let Some(links) = p.get("links").and_then(|v| v.as_object()) {
+            let mut link_map = story.frontmatter.links.unwrap_or_default();
+            for (k, v) in links {
+                if let Some(val) = v.as_str() {
+                    link_map.insert(k.clone(), val.to_string());
+                }
+            }
+            story.frontmatter.links = Some(link_map);
+        }
+    }
+
+    // Update body if provided
+    let body = markdown_body.unwrap_or(story.markdown_body);
+
+    // Update timestamp
+    story.frontmatter.timestamps.updated_at = stories::now_iso8601();
+
+    let new_content = stories::serialize_story(&story.frontmatter, &body);
+    tokio::fs::write(&file_path, &new_content)
+        .await
+        .map_err(|e| format!("Failed to write story file: {}", e))?;
+
+    let new_etag = stories::compute_etag(&new_content);
+    let after = serde_json::to_value(&story.frontmatter).ok();
+
+    // Audit log
+    let _ = stories::append_audit_event(&notes_folder, "stories.update", &id, before, after);
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "story": {
+            "id": id,
+            "etag": new_etag,
+            "updated_at": story.frontmatter.timestamps.updated_at,
+        }
+    }))
+}
+
+pub async fn stories_move_impl(
+    id: String,
+    etag: String,
+    status: String,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+    let notes_folder = PathBuf::from(&folder);
+
+    // Validate the target status
+    let new_status = stories::StoryStatus::from_str(&status)?;
+
+    let file_path = stories::find_story_file(&notes_folder, &id)?;
+    let content = tokio::fs::read_to_string(&file_path)
+        .await
+        .map_err(|e| format!("Failed to read story file: {}", e))?;
+
+    let current_etag = stories::compute_etag(&content);
+    if current_etag != etag {
+        return Err(format!(
+            "CONFLICT: etag mismatch. Expected '{}', got '{}'. Refetch the story to get the latest etag.",
+            etag, current_etag
+        ));
+    }
+
+    let mut story = stories::parse_story_file(&content, &file_path.to_string_lossy())?;
+    let old_status = story.frontmatter.status.as_str().to_string();
+
+    story.frontmatter.status = new_status;
+    story.frontmatter.timestamps.updated_at = stories::now_iso8601();
+
+    let new_content = stories::serialize_story(&story.frontmatter, &story.markdown_body);
+    tokio::fs::write(&file_path, &new_content)
+        .await
+        .map_err(|e| format!("Failed to write story file: {}", e))?;
+
+    let new_etag = stories::compute_etag(&new_content);
+
+    // Audit log
+    let _ = stories::append_audit_event(
+        &notes_folder,
+        "stories.move",
+        &id,
+        Some(serde_json::json!({ "status": old_status })),
+        Some(serde_json::json!({ "status": status })),
+    );
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "story": {
+            "id": id,
+            "status": status,
+            "etag": new_etag,
+            "updated_at": story.frontmatter.timestamps.updated_at,
+        }
+    }))
+}
+
+pub async fn search_stories_impl(
+    text: Option<String>,
+    epic_id: Option<String>,
+    tag: Option<String>,
+    owner: Option<String>,
+    status: Option<String>,
+    limit: Option<usize>,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+    let notes_folder = PathBuf::from(&folder);
+    let limit = limit.unwrap_or(20);
+
+    let mut all_stories: Vec<stories::Story> = Vec::new();
+
+    if let Some(ref eid) = epic_id {
+        let epic_folder = stories::find_epic_folder(&notes_folder, eid)?;
+        all_stories = stories::scan_stories_in_epic(&epic_folder)?;
+    } else {
+        fn collect_all(dir: &std::path::Path, all: &mut Vec<stories::Story>) {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                        if name.starts_with("E-") {
+                            if let Ok(stories) = stories::scan_stories_in_epic(&entry.path()) {
+                                all.extend(stories);
+                            }
+                        } else if !name.starts_with('.') {
+                            collect_all(&entry.path(), all);
+                        }
+                    }
+                }
+            }
+        }
+        collect_all(&notes_folder, &mut all_stories);
+    }
+
+    // Apply filters
+    if let Some(ref s) = status {
+        let target = stories::StoryStatus::from_str(s)?;
+        all_stories.retain(|story| story.frontmatter.status == target);
+    }
+    if let Some(ref t) = tag {
+        let t_lower = t.to_lowercase();
+        all_stories.retain(|story| {
+            story
+                .frontmatter
+                .tags
+                .as_ref()
+                .map(|tags| tags.iter().any(|tg| tg.to_lowercase() == t_lower))
+                .unwrap_or(false)
+        });
+    }
+    if let Some(ref o) = owner {
+        let o_lower = o.to_lowercase();
+        all_stories.retain(|story| {
+            story
+                .frontmatter
+                .owner
+                .as_ref()
+                .map(|ow| ow.to_lowercase() == o_lower)
+                .unwrap_or(false)
+        });
+    }
+
+    // Text search with snippet extraction
+    let mut results: Vec<serde_json::Value> = Vec::new();
+    for story in &all_stories {
+        let mut snippet = String::new();
+        let mut matches = true;
+
+        if let Some(ref txt) = text {
+            let t_lower = txt.to_lowercase();
+            let title_match = story.frontmatter.title.to_lowercase().contains(&t_lower);
+            let body_lower = story.markdown_body.to_lowercase();
+
+            if let Some(pos) = body_lower.find(&t_lower) {
+                // Extract snippet around match
+                let start = if pos > 40 { pos - 40 } else { 0 };
+                let end = (pos + t_lower.len() + 40).min(story.markdown_body.len());
+                snippet = format!("…{}…", &story.markdown_body[start..end].replace('\n', " "));
+            } else if title_match {
+                snippet = story.frontmatter.title.clone();
+            } else {
+                matches = false;
+            }
+        }
+
+        if matches {
+            results.push(serde_json::json!({
+                "id": story.frontmatter.id,
+                "path": story.path,
+                "title": story.frontmatter.title,
+                "snippet": snippet,
+                "updated_at": story.frontmatter.timestamps.updated_at,
+            }));
+        }
+
+        if results.len() >= limit {
+            break;
+        }
+    }
+
+    Ok(serde_json::json!({ "results": results }))
+}
+
+pub async fn validate_story_impl(
+    id: String,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+
+    let file_path = stories::find_story_file(&PathBuf::from(&folder), &id)?;
+    let content = tokio::fs::read_to_string(&file_path)
+        .await
+        .map_err(|e| format!("Failed to read story file: {}", e))?;
+
+    let story = stories::parse_story_file(&content, &file_path.to_string_lossy())?;
+    let (errors, warnings) = stories::validate_story(&story);
+
+    Ok(serde_json::json!({
+        "valid": errors.is_empty(),
+        "errors": errors,
+        "warnings": warnings,
+    }))
+}
+
 // File watcher event payload
 #[derive(Clone, Serialize)]
 struct FileChangeEvent {
@@ -1043,6 +2421,7 @@ fn setup_file_watcher(
 ) -> Result<FileWatcherState, String> {
     let folder_path = PathBuf::from(notes_folder);
     let app_handle = app.clone();
+    let watcher_folder = folder_path.clone();
 
     let watcher = RecommendedWatcher::new(
         move |res: Result<notify::Event, notify::Error>| {
@@ -1050,6 +2429,15 @@ fn setup_file_watcher(
                 for path in event.paths.iter() {
                     // Handle .md files
                     if path.extension().is_some_and(|ext| ext == "md") {
+                        // Skip files in excluded directories
+                        let dominated_by_excluded = path.components().any(|c| {
+                            let name = c.as_os_str().to_string_lossy();
+                            should_skip_dir(&name)
+                        });
+                        if dominated_by_excluded {
+                            continue;
+                        }
+
                         // Debounce with cleanup
                         {
                             let mut map = debounce_map.lock().expect("debounce map mutex");
@@ -1075,12 +2463,14 @@ fn setup_file_watcher(
                             _ => continue,
                         };
 
-                        // Extract note ID from filename
-                        let note_id = path
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .map(|s| s.to_string())
-                            .unwrap_or_default();
+                        // Extract note ID as relative path from notes folder
+                        let note_id = path_to_note_id(&watcher_folder, path)
+                            .unwrap_or_else(|| {
+                                path.file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_default()
+                            });
 
                         // Update search index for external file changes
                         if let Some(state) = app_handle.try_state::<AppState>() {
@@ -1088,7 +2478,6 @@ fn setup_file_watcher(
                             if let Some(ref search_index) = *index {
                                 match kind {
                                     "created" | "modified" => {
-                                        // Read file and index it
                                         if let Ok(content) = std::fs::read_to_string(path) {
                                             let title = extract_title(&content);
                                             let modified = std::fs::metadata(path)
@@ -1126,9 +2515,9 @@ fn setup_file_watcher(
 
     let mut watcher = watcher;
 
-    // Watch the notes folder for .md files
+    // Watch the notes folder recursively for .md files in subfolders
     watcher
-        .watch(&folder_path, RecursiveMode::NonRecursive)
+        .watch(&folder_path, RecursiveMode::Recursive)
         .map_err(|e| e.to_string())?;
 
     Ok(FileWatcherState { watcher })
@@ -1784,6 +3173,59 @@ async fn ai_execute_claude(
 
     Ok(result)
 }
+
+// MCP server status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpStatus {
+    pub running: bool,
+    pub port: u16,
+}
+
+#[tauri::command]
+fn mcp_get_status(state: State<AppState>) -> McpStatus {
+    let settings = state.settings.read().expect("settings read lock");
+    let port = settings.mcp_port.unwrap_or(3921);
+    let enabled = settings.mcp_enabled.unwrap_or(false);
+
+    let running = if enabled {
+        // Check if server handle exists
+        let handle = state.mcp_server_handle.lock().expect("mcp handle mutex");
+        handle.is_some()
+    } else {
+        false
+    };
+
+    McpStatus { running, port }
+}
+
+#[tauri::command]
+async fn mcp_restart(state: State<'_, AppState>) -> Result<McpStatus, String> {
+    // Stop existing server if running
+    {
+        let mut handle = state.mcp_server_handle.lock().expect("mcp handle mutex");
+        if let Some(h) = handle.take() {
+            h.abort();
+        }
+    }
+
+    let settings = state.settings.read().expect("settings read lock").clone();
+    let enabled = settings.mcp_enabled.unwrap_or(false);
+    let port = settings.mcp_port.unwrap_or(3921);
+
+    if enabled {
+        let app_state = AppState(Arc::clone(&state.0));
+        let server_handle = mcp::start_mcp_server(app_state, port);
+        let mut handle = state.mcp_server_handle.lock().expect("mcp handle mutex");
+        *handle = Some(server_handle);
+    }
+
+    Ok(McpStatus {
+        running: enabled,
+        port,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1818,14 +3260,28 @@ pub fn run() {
                 None
             };
 
-            let state = AppState {
+            let mcp_enabled = settings.mcp_enabled.unwrap_or(false);
+            let mcp_port = settings.mcp_port.unwrap_or(3921);
+
+            let state = AppState(Arc::new(AppStateInner {
                 app_config: RwLock::new(app_config),
                 settings: RwLock::new(settings),
                 notes_cache: RwLock::new(HashMap::new()),
                 file_watcher: Mutex::new(None),
                 search_index: Mutex::new(search_index),
                 debounce_map: Arc::new(Mutex::new(HashMap::new())),
-            };
+                mcp_server_handle: Mutex::new(None),
+                story_index: Mutex::new(None),
+            }));
+
+            // Start MCP server if enabled
+            if mcp_enabled {
+                let mcp_state = state.clone();
+                let server_handle = mcp::start_mcp_server(mcp_state, mcp_port);
+                let mut handle = state.mcp_server_handle.lock().expect("mcp handle mutex");
+                *handle = Some(server_handle);
+            }
+
             app.manage(state);
             Ok(())
         })
@@ -1857,6 +3313,8 @@ pub fn run() {
             git_push_with_upstream,
             ai_check_claude_cli,
             ai_execute_claude,
+            mcp_get_status,
+            mcp_restart,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
