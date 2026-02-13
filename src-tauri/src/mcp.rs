@@ -629,7 +629,8 @@ fn handle_initialize(id: Value) -> JsonRpcResponse {
             "serverInfo": {
                 "name": SERVER_NAME,
                 "version": SERVER_VERSION,
-            }
+            },
+            "instructions": include_str!("mcp_instructions.md")
         }),
     )
 }
