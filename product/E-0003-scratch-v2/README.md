@@ -32,7 +32,7 @@ The single biggest gap. Store structured data as YAML/frontmatter markdown files
 
 | Story | Title | Points | Status | Depends On |
 |-------|-------|--------|--------|------------|
-| [S-0003-01](stories/S-0003-01.md) | Database schema & file format | 8 | In Progress | — |
+| [S-0003-01](stories/S-0003-01.md) | Database schema & file format | 8 | Done | — |
 | [S-0003-02](stories/S-0003-02.md) | Table view block | 5 | Backlog | [01](stories/S-0003-01.md) |
 | [S-0003-03](stories/S-0003-03.md) | Board/kanban view block | 5 | Backlog | [01](stories/S-0003-01.md) |
 | [S-0003-04](stories/S-0003-04.md) | MCP database tools | 3 | Backlog | [01](stories/S-0003-01.md) |
@@ -106,4 +106,5 @@ Let AI agents build integrations. The MCP server already exposes 24 tools — th
 | 2026-02-13 | v1.0.0 | Started | S-0003-08 Equation block | — |
 | 2026-02-13 | v1.0.0 | Completed | S-0003-10 Table of contents block | `8228c0f` |
 | 2026-02-13 | v1.0.0 | Completed | S-0003-13 Webhook receiver | `a556d40` |
+| 2026-02-13 | v1.0.0 | Completed | S-0003-01 Database schema & file format | `a556d40` |
 | 2026-02-13 | v1.0.0 | Started | S-0003-14 Plugin manifest system | — |
