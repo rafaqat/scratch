@@ -17,6 +17,7 @@ use tokio::fs;
 pub mod database;
 mod git;
 mod mcp;
+pub mod plugins;
 pub mod stories;
 pub mod webhooks;
 
@@ -364,6 +365,7 @@ fn get_backlinks_index_path(notes_folder: &str) -> PathBuf {
 }
 
 /// Load backlinks index from disk.
+#[allow(dead_code)]
 fn load_backlinks_index(notes_folder: &str) -> BacklinksIndex {
     let path = get_backlinks_index_path(notes_folder);
     if path.exists() {

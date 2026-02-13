@@ -61,3 +61,17 @@ export async function searchNotes(query: string): Promise<SearchResult[]> {
 export async function startFileWatcher(): Promise<void> {
   return invoke("start_file_watcher");
 }
+
+export interface BacklinkEntry {
+  noteId: string;
+  noteTitle: string;
+  context: string;
+}
+
+export async function getBacklinks(noteTitle: string): Promise<BacklinkEntry[]> {
+  return invoke("get_backlinks", { noteTitle });
+}
+
+export async function rebuildBacklinks(): Promise<void> {
+  return invoke("rebuild_backlinks");
+}
