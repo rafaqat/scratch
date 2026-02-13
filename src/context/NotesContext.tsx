@@ -11,6 +11,7 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import type { Note, NoteMetadata } from "../types/note";
 import * as notesService from "../services/notes";
+import * as templatesService from "../services/templates";
 import type { SearchResult } from "../services/notes";
 
 // Separate contexts to prevent unnecessary re-renders
@@ -27,6 +28,7 @@ interface NotesDataContextValue {
   isSearching: boolean;
   hasExternalChanges: boolean;
   reloadVersion: number;
+  pendingCursorLine: number | null;
 }
 
 // Actions context: stable references, rarely causes re-renders
@@ -43,6 +45,8 @@ interface NotesActionsContextValue {
   clearSearch: () => void;
   pinNote: (id: string) => Promise<void>;
   unpinNote: (id: string) => Promise<void>;
+  createNoteFromTemplate: (templateId: string, title?: string) => Promise<void>;
+  clearPendingCursorLine: () => void;
 }
 
 const NotesDataContext = createContext<NotesDataContextValue | null>(null);
@@ -61,6 +65,8 @@ export function NotesProvider({ children }: { children: ReactNode }) {
   const [hasExternalChanges, setHasExternalChanges] = useState(false);
   // Increments when user manually refreshes, so Editor knows to reload content
   const [reloadVersion, setReloadVersion] = useState(0);
+  // Cursor line from template creation, consumed by Editor
+  const [pendingCursorLine, setPendingCursorLine] = useState<number | null>(null);
 
   // Track recently saved note IDs to ignore file-change events from our own saves
   const recentlySavedRef = useRef<Set<string>>(new Set());
@@ -281,6 +287,27 @@ export function NotesProvider({ children }: { children: ReactNode }) {
     [refreshNotes]
   );
 
+  const createNoteFromTemplate = useCallback(
+    async (templateId: string, title?: string) => {
+      try {
+        const result = await templatesService.createNoteFromTemplate(templateId, title);
+        await refreshNotes();
+        setCurrentNote(result.note);
+        setSelectedNoteId(result.note.id);
+        setPendingCursorLine(result.cursorLine);
+        setSearchQuery("");
+        setSearchResults([]);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to create note from template");
+      }
+    },
+    [refreshNotes]
+  );
+
+  const clearPendingCursorLine = useCallback(() => {
+    setPendingCursorLine(null);
+  }, []);
+
   const setNotesFolder = useCallback(async (path: string) => {
     try {
       await notesService.setNotesFolder(path);
@@ -402,6 +429,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
       isSearching,
       hasExternalChanges,
       reloadVersion,
+      pendingCursorLine,
     }),
     [
       notes,
@@ -415,6 +443,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
       isSearching,
       hasExternalChanges,
       reloadVersion,
+      pendingCursorLine,
     ]
   );
 
@@ -433,6 +462,8 @@ export function NotesProvider({ children }: { children: ReactNode }) {
       clearSearch,
       pinNote,
       unpinNote,
+      createNoteFromTemplate,
+      clearPendingCursorLine,
     }),
     [
       selectNote,
@@ -447,6 +478,8 @@ export function NotesProvider({ children }: { children: ReactNode }) {
       clearSearch,
       pinNote,
       unpinNote,
+      createNoteFromTemplate,
+      clearPendingCursorLine,
     ]
   );
 

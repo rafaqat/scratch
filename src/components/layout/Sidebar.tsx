@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useNotes } from "../../context/NotesContext";
 import { useTheme } from "../../context/ThemeContext";
 import { NoteList } from "../notes/NoteList";
 import { Footer } from "./Footer";
 import { IconButton, Input, Tooltip } from "../ui";
+import * as templatesService from "../../services/templates";
+import type { TemplateInfo } from "../../services/templates";
 import {
   PlusIcon,
   XIcon,
@@ -12,6 +15,8 @@ import {
   SearchIcon,
   SearchOffIcon,
   FolderIcon,
+  TemplateIcon,
+  AddNoteIcon,
 } from "../icons";
 import { mod, isMac } from "../../lib/platform";
 
@@ -20,13 +25,21 @@ interface SidebarProps {
 }
 
 export function Sidebar({ onOpenSettings }: SidebarProps) {
-  const { createNote, notes, notesFolder, setNotesFolder, search, searchQuery, clearSearch, isSearching } =
+  const { createNote, createNoteFromTemplate, notes, notesFolder, setNotesFolder, search, searchQuery, clearSearch, isSearching } =
     useNotes();
   const { reloadSettings } = useTheme();
   const [searchOpen, setSearchOpen] = useState(false);
   const [inputValue, setInputValue] = useState(searchQuery);
+  const [templates, setTemplates] = useState<TemplateInfo[]>([]);
   const debounceRef = useRef<number | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Load templates when folder is set
+  useEffect(() => {
+    if (notesFolder) {
+      templatesService.listTemplates().then(setTemplates).catch(console.error);
+    }
+  }, [notesFolder]);
 
   // Sync input with search query
   useEffect(() => {
@@ -134,13 +147,50 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
               <SearchIcon className="w-4.25 h-4.25 stroke-[1.5]" />
             )}
           </IconButton>
-          <IconButton
-            variant="ghost"
-            onClick={createNote}
-            title={`New Note (${mod}${isMac ? "" : "+"}N)`}
-          >
-            <PlusIcon className="w-5.25 h-5.25 stroke-[1.4]" />
-          </IconButton>
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <IconButton
+                variant="ghost"
+                title={`New Note (${mod}${isMac ? "" : "+"}N)`}
+              >
+                <PlusIcon className="w-5.25 h-5.25 stroke-[1.4]" />
+              </IconButton>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                className="min-w-[200px] bg-bg rounded-lg shadow-lg border border-border p-1.5 z-50 animate-slide-down"
+                align="end"
+                sideOffset={4}
+              >
+                <DropdownMenu.Item
+                  className="flex items-center gap-2.5 px-2.5 py-2 text-sm rounded-md cursor-pointer hover:bg-bg-muted outline-none data-[highlighted]:bg-bg-muted"
+                  onSelect={() => createNote()}
+                >
+                  <AddNoteIcon className="w-4 h-4 stroke-[1.5] text-text-muted" />
+                  <span>Blank Note</span>
+                  <span className="ml-auto text-xs text-text-muted">{mod}{isMac ? "" : "+"}N</span>
+                </DropdownMenu.Item>
+                {templates.length > 0 && (
+                  <>
+                    <DropdownMenu.Separator className="h-px bg-border my-1" />
+                    <DropdownMenu.Label className="px-2.5 py-1 text-xs font-medium text-text-muted">
+                      Templates
+                    </DropdownMenu.Label>
+                    {templates.map((template) => (
+                      <DropdownMenu.Item
+                        key={template.id}
+                        className="flex items-center gap-2.5 px-2.5 py-2 text-sm rounded-md cursor-pointer hover:bg-bg-muted outline-none data-[highlighted]:bg-bg-muted"
+                        onSelect={() => createNoteFromTemplate(template.id)}
+                      >
+                        <TemplateIcon className="w-4 h-4 stroke-[1.5] text-text-muted" />
+                        <span>{template.name}</span>
+                      </DropdownMenu.Item>
+                    ))}
+                  </>
+                )}
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
         </div>
       </div>
       {/* Scrollable area with search and notes */}

@@ -63,7 +63,7 @@ Note and database templates stored as markdown files.
 
 | Story | Title | Points | Status | Depends On |
 |-------|-------|--------|--------|------------|
-| [S-0003-11](stories/S-0003-11.md) | Template system | 3 | In Progress | — |
+| [S-0003-11](stories/S-0003-11.md) | Template system | 3 | Done | — |
 | [S-0003-12](stories/S-0003-12.md) | Database row templates | 2 | Backlog | [01](stories/S-0003-01.md) [11](stories/S-0003-11.md) |
 
 ## 5. MCP Plugin Ecosystem
@@ -110,4 +110,6 @@ Let AI agents build integrations. The MCP server already exposes 24 tools — th
 | 2026-02-13 | v1.0.0 | Started | S-0003-14 Plugin manifest system | — |
 | 2026-02-13 | v1.0.0 | Completed | S-0003-07 Callout block | `118491f` |
 | 2026-02-13 | v1.0.0 | Completed | S-0003-06 Backlinks panel | `24a0e9a` |
+| 2026-02-13 | v1.0.0 | Completed | S-0003-14 Plugin manifest system | `e5d8d49` |
 | 2026-02-13 | v1.0.0 | Completed | S-0003-08 Equation block | `9ee89d7` |
+| 2026-02-13 | v1.0.0 | Completed | S-0003-11 Template system | — |

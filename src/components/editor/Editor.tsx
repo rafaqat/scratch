@@ -137,7 +137,7 @@ function getCustomSlashMenuItems(
       onItemClick: () => {
         insertOrUpdateBlockForSlashMenu(editor, {
           type: "equation" as never,
-          props: { equation: "" },
+          props: { equation: "" } as never,
         });
       },
       aliases: ["equation", "math", "latex", "formula", "katex"],
@@ -175,6 +175,8 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
     reloadVersion,
     pinNote,
     unpinNote,
+    pendingCursorLine,
+    clearPendingCursorLine,
   } = useNotes();
   const { resolvedTheme } = useTheme();
   const [isSaving, setIsSaving] = useState(false);
@@ -392,8 +394,22 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
       if (loadedNoteIdRef.current !== loadingNoteId) return;
       scrollContainerRef.current?.scrollTo(0, 0);
       isLoadingRef.current = false;
+
+      // Position cursor at template cursor line if pending
+      if (pendingCursorLine != null && pendingCursorLine >= 0) {
+        try {
+          const blocks = editor.document;
+          const targetBlock = blocks[Math.min(pendingCursorLine, blocks.length - 1)];
+          if (targetBlock) {
+            editor.setTextCursorPosition(targetBlock.id, "end");
+          }
+        } catch {
+          // Ignore cursor positioning errors
+        }
+        clearPendingCursorLine();
+      }
     });
-  }, [currentNote, editor, flushPendingSave, reloadVersion, extractBody]);
+  }, [currentNote, editor, flushPendingSave, reloadVersion, extractBody, pendingCursorLine, clearPendingCursorLine]);
 
   // Scroll to top on mount
   useEffect(() => {

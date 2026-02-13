@@ -13,6 +13,8 @@ import { useNotes } from "../../context/NotesContext";
 import { useTheme } from "../../context/ThemeContext";
 import { useGit } from "../../context/GitContext";
 import * as notesService from "../../services/notes";
+import * as templatesService from "../../services/templates";
+import type { TemplateInfo } from "../../services/templates";
 import type { Settings } from "../../types/note";
 import {
   CommandItem,
@@ -37,6 +39,7 @@ import {
   TrashIcon,
   PinIcon,
   ClaudeIcon,
+  TemplateIcon,
 } from "../icons";
 import { mod } from "../../lib/platform";
 
@@ -70,6 +73,7 @@ export function CommandPalette({
     refreshNotes,
     pinNote,
     unpinNote,
+    createNoteFromTemplate,
   } = useNotes();
   const { theme, setTheme } = useTheme();
   const { status, gitAvailable, commit, push } = useGit();
@@ -81,13 +85,15 @@ export function CommandPalette({
     { id: string; title: string; preview: string; modified: number }[]
   >([]);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [templates, setTemplates] = useState<TemplateInfo[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Load settings when palette opens or current note changes
+  // Load settings and templates when palette opens
   useEffect(() => {
     if (open) {
       notesService.getSettings().then(setSettings);
+      templatesService.listTemplates().then(setTemplates).catch(console.error);
     }
   }, [open, currentNote?.id]);
 
@@ -105,6 +111,19 @@ export function CommandPalette({
         },
       },
     ];
+
+    // Add template commands
+    for (const template of templates) {
+      baseCommands.push({
+        id: `template-${template.id}`,
+        label: `New from Template: ${template.name}`,
+        icon: <TemplateIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
+        action: () => {
+          createNoteFromTemplate(template.id);
+          onClose();
+        },
+      });
+    }
 
     // Add note-specific commands if a note is selected
     if (currentNote) {
@@ -310,6 +329,8 @@ export function CommandPalette({
     settings,
     pinNote,
     unpinNote,
+    templates,
+    createNoteFromTemplate,
   ]);
 
   // Debounced search using Tantivy (local state, doesn't affect sidebar)
