@@ -33,9 +33,9 @@ The single biggest gap. Store structured data as YAML/frontmatter markdown files
 | Story | Title | Points | Status | Depends On |
 |-------|-------|--------|--------|------------|
 | [S-0003-01](stories/S-0003-01.md) | Database schema & file format | 8 | Done | — |
-| [S-0003-02](stories/S-0003-02.md) | Table view block | 5 | Backlog | [01](stories/S-0003-01.md) |
-| [S-0003-03](stories/S-0003-03.md) | Board/kanban view block | 5 | Backlog | [01](stories/S-0003-01.md) |
-| [S-0003-04](stories/S-0003-04.md) | MCP database tools | 3 | Backlog | [01](stories/S-0003-01.md) |
+| [S-0003-02](stories/S-0003-02.md) | Table view block | 5 | Done | [01](stories/S-0003-01.md) |
+| [S-0003-03](stories/S-0003-03.md) | Board/kanban view block | 5 | Done | [01](stories/S-0003-01.md) |
+| [S-0003-04](stories/S-0003-04.md) | MCP database tools | 3 | Done | [01](stories/S-0003-01.md) |
 
 ## 2. Nested Pages & Wikilinks
 
@@ -64,7 +64,7 @@ Note and database templates stored as markdown files.
 | Story | Title | Points | Status | Depends On |
 |-------|-------|--------|--------|------------|
 | [S-0003-11](stories/S-0003-11.md) | Template system | 3 | Done | — |
-| [S-0003-12](stories/S-0003-12.md) | Database row templates | 2 | Backlog | [01](stories/S-0003-01.md) [11](stories/S-0003-11.md) |
+| [S-0003-12](stories/S-0003-12.md) | Database row templates | 2 | Done | [01](stories/S-0003-01.md) [11](stories/S-0003-11.md) |
 
 ## 5. MCP Plugin Ecosystem
 
@@ -74,7 +74,7 @@ Let AI agents build integrations. The MCP server already exposes 24 tools — th
 |-------|-------|--------|--------|------------|
 | [S-0003-13](stories/S-0003-13.md) | Webhook receiver | 3 | Done | — |
 | [S-0003-14](stories/S-0003-14.md) | Plugin manifest system | 5 | Done | — |
-| [S-0003-15](stories/S-0003-15.md) | Built-in reference plugins | 2 | Backlog | [14](stories/S-0003-14.md) |
+| [S-0003-15](stories/S-0003-15.md) | Built-in reference plugins | 2 | Done | [14](stories/S-0003-14.md) |
 
 ---
 
@@ -115,3 +115,9 @@ Let AI agents build integrations. The MCP server already exposes 24 tools — th
 | 2026-02-13 | v1.0.0 | Completed | S-0003-11 Template system | `24470cf` |
 | 2026-02-13 | v1.0.0 | Started | S-0003-09 Bookmark block | — |
 | 2026-02-13 | v1.0.0 | Completed | S-0003-09 Bookmark block | `01abf14` |
+| 2026-02-13 | v1.0.0 | Completed | S-0003-02 Table view block | `648e63c` |
+| 2026-02-13 | v1.0.0 | Completed | S-0003-03 Board/kanban view block | `648e63c` |
+| 2026-02-13 | v1.0.0 | Completed | S-0003-04 MCP database tools | `648e63c` |
+| 2026-02-13 | v1.0.0 | Completed | S-0003-12 Database row templates | `ecc90c9` |
+| 2026-02-13 | v1.0.0 | Completed | S-0003-15 Built-in reference plugins | `fe828e4` |
+| 2026-02-13 | v1.0.0 | **Epic complete** | All 15 stories Done (55 points) | — |
