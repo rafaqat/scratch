@@ -114,4 +114,4 @@ Let AI agents build integrations. The MCP server already exposes 24 tools — th
 | 2026-02-13 | v1.0.0 | Completed | S-0003-08 Equation block | `9ee89d7` |
 | 2026-02-13 | v1.0.0 | Completed | S-0003-11 Template system | `24470cf` |
 | 2026-02-13 | v1.0.0 | Started | S-0003-09 Bookmark block | — |
-| 2026-02-13 | v1.0.0 | Completed | S-0003-09 Bookmark block | — |
+| 2026-02-13 | v1.0.0 | Completed | S-0003-09 Bookmark block | `01abf14` |
