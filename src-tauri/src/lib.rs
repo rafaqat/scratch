@@ -1,3 +1,5 @@
+#![recursion_limit = "512"]
+
 use anyhow::Result;
 use base64::Engine;
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
@@ -3347,6 +3349,137 @@ async fn open_url_safe(url: String) -> Result<(), String> {
     open::that(&url).map_err(|e| format!("Failed to open URL: {}", e))
 }
 
+/// URL metadata returned by fetch_url_metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UrlMetadata {
+    pub title: String,
+    pub description: String,
+    pub image: String,
+    pub favicon: String,
+    pub domain: String,
+}
+
+#[tauri::command]
+async fn fetch_url_metadata(url: String) -> Result<UrlMetadata, String> {
+    // Validate URL scheme
+    let parsed = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {}", e))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        scheme => {
+            return Err(format!(
+                "URL scheme '{}' is not allowed. Only http and https are permitted.",
+                scheme
+            ))
+        }
+    }
+
+    let domain = parsed.host_str().unwrap_or("").to_string();
+
+    // Build a favicon URL from the domain
+    let favicon_default = format!(
+        "https://www.google.com/s2/favicons?domain={}&sz=32",
+        domain
+    );
+
+    // Fetch the HTML
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .user_agent("Mozilla/5.0 (compatible; Scratch/1.0)")
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch URL: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("HTTP error: {}", response.status()));
+    }
+
+    let html = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    // Parse HTML with scraper
+    let document = scraper::Html::parse_document(&html);
+
+    // Helper to get meta content by property or name
+    let get_meta = |attr: &str, value: &str| -> Option<String> {
+        let selector_str = format!("meta[{}=\"{}\"]", attr, value);
+        if let Ok(selector) = scraper::Selector::parse(&selector_str) {
+            document
+                .select(&selector)
+                .next()
+                .and_then(|el| el.value().attr("content"))
+                .map(|s| s.to_string())
+        } else {
+            None
+        }
+    };
+
+    // Extract title: og:title > twitter:title > <title>
+    let title = get_meta("property", "og:title")
+        .or_else(|| get_meta("name", "twitter:title"))
+        .or_else(|| {
+            scraper::Selector::parse("title")
+                .ok()
+                .and_then(|sel| document.select(&sel).next())
+                .map(|el| el.text().collect::<String>())
+        })
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    // Extract description: og:description > twitter:description > meta description
+    let description = get_meta("property", "og:description")
+        .or_else(|| get_meta("name", "twitter:description"))
+        .or_else(|| get_meta("name", "description"))
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    // Extract image: og:image > twitter:image
+    let image = get_meta("property", "og:image")
+        .or_else(|| get_meta("name", "twitter:image"))
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    // Extract favicon: link[rel~=icon] > default
+    let favicon = scraper::Selector::parse("link[rel~=\"icon\"], link[rel=\"shortcut icon\"]")
+        .ok()
+        .and_then(|sel| {
+            document
+                .select(&sel)
+                .next()
+                .and_then(|el| el.value().attr("href"))
+                .map(|href| {
+                    // Resolve relative URLs
+                    if href.starts_with("http") {
+                        href.to_string()
+                    } else if href.starts_with("//") {
+                        format!("https:{}", href)
+                    } else {
+                        format!("{}://{}{}", parsed.scheme(), domain, if href.starts_with('/') { href.to_string() } else { format!("/{}", href) })
+                    }
+                })
+        })
+        .unwrap_or(favicon_default);
+
+    Ok(UrlMetadata {
+        title,
+        description,
+        image,
+        favicon,
+        domain,
+    })
+}
+
 // Git commands - run blocking git operations off the main thread
 
 #[tauri::command]
@@ -4015,6 +4148,7 @@ pub fn run() {
             open_folder_dialog,
             reveal_in_file_manager,
             open_url_safe,
+            fetch_url_metadata,
             git_is_available,
             git_get_status,
             git_init_repo,
