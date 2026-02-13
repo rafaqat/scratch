@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { type StoryFrontmatter, STORY_STATUSES } from "../../lib/frontmatter";
 import { cn } from "../../lib/utils";
 
@@ -7,134 +7,99 @@ interface StoryMetaCardProps {
   onChange: (updated: StoryFrontmatter) => void;
 }
 
-/* ─── Status colors ─── */
+/* ─── Status config ─── */
 
-const STATUS_COLORS: Record<string, { dot: string; text: string }> = {
-  Backlog: { dot: "bg-neutral-400", text: "text-neutral-400 dark:text-neutral-400" },
-  Ready: { dot: "bg-blue-400", text: "text-blue-400 dark:text-blue-400" },
-  "In Progress": { dot: "bg-amber-400", text: "text-amber-400 dark:text-amber-400" },
-  "In Review": { dot: "bg-purple-400", text: "text-purple-400 dark:text-purple-400" },
-  Done: { dot: "bg-emerald-400", text: "text-emerald-400 dark:text-emerald-400" },
-  Blocked: { dot: "bg-red-400", text: "text-red-400 dark:text-red-400" },
+const STATUS_CONFIG: Record<string, {
+  dot: string;
+  activeBg: string;
+  activeText: string;
+  activeBorder: string;
+}> = {
+  Backlog: {
+    dot: "bg-neutral-400",
+    activeBg: "bg-neutral-200 dark:bg-neutral-700",
+    activeText: "text-neutral-700 dark:text-neutral-200",
+    activeBorder: "border-neutral-400/50",
+  },
+  Ready: {
+    dot: "bg-blue-400",
+    activeBg: "bg-blue-100 dark:bg-blue-900/40",
+    activeText: "text-blue-700 dark:text-blue-300",
+    activeBorder: "border-blue-400/50",
+  },
+  "In Progress": {
+    dot: "bg-amber-400",
+    activeBg: "bg-amber-100 dark:bg-amber-900/40",
+    activeText: "text-amber-700 dark:text-amber-300",
+    activeBorder: "border-amber-400/50",
+  },
+  "In Review": {
+    dot: "bg-purple-400",
+    activeBg: "bg-purple-100 dark:bg-purple-900/40",
+    activeText: "text-purple-700 dark:text-purple-300",
+    activeBorder: "border-purple-400/50",
+  },
+  Done: {
+    dot: "bg-emerald-400",
+    activeBg: "bg-emerald-100 dark:bg-emerald-900/40",
+    activeText: "text-emerald-700 dark:text-emerald-300",
+    activeBorder: "border-emerald-400/50",
+  },
+  Blocked: {
+    dot: "bg-red-400",
+    activeBg: "bg-red-100 dark:bg-red-900/40",
+    activeText: "text-red-700 dark:text-red-300",
+    activeBorder: "border-red-400/50",
+  },
 };
 
-/* ─── Status Dropdown ─── */
+// Short labels for pipeline display
+const STATUS_SHORT: Record<string, string> = {
+  Backlog: "BACKLOG",
+  Ready: "READY",
+  "In Progress": "PROGRESS",
+  "In Review": "REVIEW",
+  Done: "DONE",
+  Blocked: "BLOCKED",
+};
 
-function StatusDropdown({
+/* ─── Kanban Pipeline ─── */
+
+function KanbanPipeline({
   status,
   onChangeStatus,
 }: {
   status: string;
   onChangeStatus: (s: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [animating, setAnimating] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handleClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setAnimating(false);
-        setTimeout(() => setOpen(false), 120);
-      }
-    };
-    const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setAnimating(false);
-        setTimeout(() => setOpen(false), 120);
-      }
-    };
-    document.addEventListener("mousedown", handleClick);
-    document.addEventListener("keydown", handleEsc);
-    return () => {
-      document.removeEventListener("mousedown", handleClick);
-      document.removeEventListener("keydown", handleEsc);
-    };
-  }, [open]);
-
-  const handleOpen = () => {
-    setOpen(true);
-    requestAnimationFrame(() => setAnimating(true));
-  };
-
-  const handleSelect = (s: string) => {
-    onChangeStatus(s);
-    setAnimating(false);
-    setTimeout(() => setOpen(false), 120);
-  };
-
-  const colors = STATUS_COLORS[status] || STATUS_COLORS.Backlog;
+  const currentIdx = STORY_STATUSES.indexOf(status);
 
   return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={open ? () => { setAnimating(false); setTimeout(() => setOpen(false), 120); } : handleOpen}
-        className={cn(
-          "inline-flex items-center gap-1.5 cursor-pointer select-none",
-          "transition-opacity hover:opacity-80 active:scale-[0.98]"
-        )}
-      >
-        <span className={cn(colors.text, "text-[11px] font-semibold uppercase tracking-[0.08em]")}>
-          {status}
-        </span>
-        <svg
-          className={cn("w-2.5 h-2.5 opacity-40 transition-transform duration-150", open && "rotate-180")}
-          viewBox="0 0 10 10"
-          fill="none"
-        >
-          <path d="M2.5 4L5 6.5L7.5 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
+    <div className="flex items-center gap-0.5">
+      {STORY_STATUSES.map((s, i) => {
+        const config = STATUS_CONFIG[s] || STATUS_CONFIG.Backlog;
+        const isActive = s === status;
+        const isPast = i < currentIdx && status !== "Blocked";
 
-      {open && (
-        <div
-          className={cn(
-            "absolute top-full left-0 mt-1.5 z-50 min-w-[160px]",
-            "rounded-lg overflow-hidden border",
-            "bg-white dark:bg-neutral-800 border-neutral-200 dark:border-neutral-700",
-            "transition-all duration-150 origin-top-left",
-            animating
-              ? "opacity-100 scale-100 shadow-xl translate-y-0"
-              : "opacity-0 scale-95 shadow-none -translate-y-1"
-          )}
-        >
-          <div className="p-0.5">
-            {STORY_STATUSES.map((s) => {
-              const c = STATUS_COLORS[s] || STATUS_COLORS.Backlog;
-              const isActive = s === status;
-              return (
-                <button
-                  key={s}
-                  onClick={() => handleSelect(s)}
-                  className={cn(
-                    "w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[11px] text-left",
-                    "transition-colors duration-100 cursor-pointer",
-                    isActive
-                      ? "bg-neutral-100 dark:bg-neutral-700"
-                      : "hover:bg-neutral-50 dark:hover:bg-neutral-700/50"
-                  )}
-                >
-                  <div className={cn("w-2 h-2 rounded-full flex-shrink-0", c.dot)} />
-                  <span className={cn(
-                    "flex-1 uppercase tracking-[0.06em] font-medium",
-                    isActive
-                      ? "text-neutral-900 dark:text-neutral-100"
-                      : "text-neutral-600 dark:text-neutral-400"
-                  )}>
-                    {s}
-                  </span>
-                  {isActive && (
-                    <svg className="w-3 h-3 text-neutral-400" viewBox="0 0 12 12" fill="none">
-                      <path d="M2 6.5L4.5 9L10 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
+        return (
+          <button
+            key={s}
+            onClick={() => onChangeStatus(s)}
+            title={s}
+            className={cn(
+              "relative px-2 py-1 text-[9px] font-bold uppercase tracking-[0.1em] rounded",
+              "transition-all duration-150 cursor-pointer select-none border",
+              isActive
+                ? cn(config.activeBg, config.activeText, config.activeBorder)
+                : isPast
+                  ? "bg-neutral-200/60 dark:bg-neutral-700/40 text-neutral-400 dark:text-neutral-500 border-transparent"
+                  : "bg-transparent text-neutral-300 dark:text-neutral-600 border-transparent hover:bg-neutral-100 dark:hover:bg-neutral-700/30 hover:text-neutral-500 dark:hover:text-neutral-400",
+            )}
+          >
+            {STATUS_SHORT[s] || s.toUpperCase()}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -143,7 +108,20 @@ function StatusDropdown({
 
 function Label({ children }: { children: React.ReactNode }) {
   return (
-    <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-neutral-400 dark:text-neutral-500">
+    <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-neutral-400 dark:text-neutral-500 shrink-0">
+      {children}
+    </span>
+  );
+}
+
+/* ─── Value ─── */
+
+function Value({ children, mono }: { children: React.ReactNode; mono?: boolean }) {
+  return (
+    <span className={cn(
+      "text-[11px] font-medium text-neutral-600 dark:text-neutral-400",
+      mono && "tabular-nums"
+    )}>
       {children}
     </span>
   );
@@ -152,24 +130,33 @@ function Label({ children }: { children: React.ReactNode }) {
 /* ─── Main Card ─── */
 
 export function StoryMetaCard({ frontmatter, onChange }: StoryMetaCardProps) {
+  const today = useMemo(() => new Date().toISOString().split("T")[0], []);
+
   const handleStatusChange = useCallback(
     (newStatus: string) => {
-      const now = new Date().toISOString().split("T")[0];
       const updates: Partial<StoryFrontmatter> = { status: newStatus };
-      if (newStatus === "In Progress" && !frontmatter.started_at) {
-        updates.started_at = now;
+
+      // Auto-set started_at when entering In Progress (or beyond) for the first time
+      if (
+        !frontmatter.started_at &&
+        ["In Progress", "In Review", "Done"].includes(newStatus)
+      ) {
+        updates.started_at = today;
       }
-      if (newStatus === "Done" && !frontmatter.completed_at) {
-        updates.completed_at = now;
+
+      // Auto-set completed_at when moving to Done
+      if (newStatus === "Done") {
+        updates.completed_at = today;
       }
+
+      // Clear completed_at if moving back from Done
+      if (newStatus !== "Done" && frontmatter.completed_at) {
+        updates.completed_at = "";
+      }
+
       onChange({ ...frontmatter, ...updates });
     },
-    [frontmatter, onChange]
-  );
-
-  const statusColors = useMemo(
-    () => STATUS_COLORS[frontmatter.status] || STATUS_COLORS.Backlog,
-    [frontmatter.status]
+    [frontmatter, onChange, today]
   );
 
   const epic = frontmatter.links?.epic || "";
@@ -200,101 +187,85 @@ export function StoryMetaCard({ frontmatter, onChange }: StoryMetaCardProps) {
         {/* Divider */}
         <div className="h-px bg-neutral-300 dark:bg-neutral-600 mb-3" />
 
-        {/* Row 1: Status + Points */}
-        <div className="flex items-baseline gap-6 mb-1.5">
-          <div className="flex items-center gap-2">
-            <Label>Status:</Label>
-            <div className={cn("w-1.5 h-1.5 rounded-full", statusColors.dot)} />
-            <StatusDropdown status={frontmatter.status} onChangeStatus={handleStatusChange} />
-          </div>
+        {/* Kanban Pipeline */}
+        <div className="mb-3">
+          <KanbanPipeline status={frontmatter.status} onChangeStatus={handleStatusChange} />
+        </div>
+
+        {/* Row: Points + Tags */}
+        <div className="flex items-baseline gap-6 mb-1.5 flex-wrap">
           {frontmatter.estimate_points !== undefined && (
-            <div className="flex items-baseline gap-2 ml-auto">
-              <Label>Est. Points:</Label>
+            <div className="flex items-baseline gap-1.5">
+              <Label>Points:</Label>
               <span className="text-sm font-bold text-neutral-900 dark:text-neutral-100 tabular-nums">
                 {frontmatter.estimate_points}
               </span>
             </div>
           )}
+          {frontmatter.tags && frontmatter.tags.length > 0 && (
+            <div className="flex items-baseline gap-1.5">
+              <Label>Tags:</Label>
+              <Value>{frontmatter.tags.join(", ")}</Value>
+            </div>
+          )}
         </div>
 
-        {/* Row 2: Tags */}
-        {frontmatter.tags && frontmatter.tags.length > 0 && (
-          <div className="flex items-baseline gap-2 mb-1.5">
-            <Label>Tags:</Label>
-            <span className="text-[11px] font-medium uppercase tracking-[0.04em] text-neutral-600 dark:text-neutral-400">
-              [{frontmatter.tags.join(", ")}]
-            </span>
-          </div>
-        )}
-
-        {/* Row 3: Owner */}
-        <div className="flex items-baseline gap-2 mb-1.5">
+        {/* Row: Owner */}
+        <div className="flex items-baseline gap-1.5 mb-1.5">
           <Label>Owner:</Label>
-          <span className="text-[11px] font-medium uppercase tracking-[0.04em] text-neutral-600 dark:text-neutral-400">
-            {frontmatter.owner || "Unassigned"}
-          </span>
+          <Value>{frontmatter.owner || "Unassigned"}</Value>
         </div>
 
-        {/* Row 4: Dates */}
-        <div className="flex items-baseline gap-4 mb-3">
+        {/* Row: Dates - auto-populated by state changes */}
+        <div className="flex items-baseline gap-4 mb-3 flex-wrap">
           <div className="flex items-baseline gap-1.5">
             <Label>Created:</Label>
-            <span className="text-[11px] text-neutral-600 dark:text-neutral-400 tabular-nums">
-              {frontmatter.created_at || "—"}
-            </span>
+            <Value mono>{frontmatter.created_at || "—"}</Value>
           </div>
           <div className="flex items-baseline gap-1.5">
             <Label>Started:</Label>
-            <span className="text-[11px] text-neutral-600 dark:text-neutral-400 tabular-nums">
-              {frontmatter.started_at || "—"}
-            </span>
+            <Value mono>{frontmatter.started_at || "—"}</Value>
           </div>
           <div className="flex items-baseline gap-1.5">
             <Label>Done:</Label>
-            <span className="text-[11px] text-neutral-600 dark:text-neutral-400 tabular-nums">
-              {frontmatter.completed_at || "—"}
-            </span>
+            <Value mono>{frontmatter.completed_at || "—"}</Value>
           </div>
         </div>
 
         {/* Divider */}
         <div className="h-px bg-neutral-300 dark:bg-neutral-600 mb-3" />
 
-        {/* Row 5: Version + Commits + Links */}
-        <div className="flex items-baseline gap-4 mb-1.5">
+        {/* Row: Version + Commits + Links */}
+        <div className="flex items-baseline gap-4 mb-1.5 flex-wrap">
           <div className="flex items-baseline gap-1.5">
             <Label>Version:</Label>
-            <span className="text-[11px] text-neutral-600 dark:text-neutral-400">
-              {frontmatter.target_version || "—"}
-            </span>
+            <Value>{frontmatter.target_version || "—"}</Value>
           </div>
           <div className="flex items-baseline gap-1.5">
             <Label>Commits:</Label>
-            <span className="text-[11px] text-neutral-600 dark:text-neutral-400 tabular-nums">
+            <Value mono>
               {frontmatter.commits && frontmatter.commits.length > 0
                 ? frontmatter.commits.length
                 : "—"}
-            </span>
+            </Value>
           </div>
           {hasLinks && (
             <div className="flex items-baseline gap-1.5">
               <Label>Links:</Label>
-              <span className="text-[11px] text-neutral-600 dark:text-neutral-400">
+              <Value>
                 {blocks.length > 0 && `blocks ${blocks.length}`}
                 {blocks.length > 0 && blockedBy.length > 0 && " · "}
                 {blockedBy.length > 0 && `blocked ${blockedBy.length}`}
-              </span>
+              </Value>
             </div>
           )}
         </div>
 
-        {/* Row 6: Epic */}
+        {/* Row: Epic */}
         {epic && (
-          <div className="flex items-baseline gap-2">
+          <div className="flex items-baseline gap-1.5">
             <Label>Epic:</Label>
-            <span className="text-[11px] font-medium uppercase tracking-[0.04em] text-neutral-600 dark:text-neutral-400">
-              {epic}
-            </span>
+            <Value>{epic}</Value>
           </div>
         )}
       </div>
