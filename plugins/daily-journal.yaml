@@ -1,0 +1,58 @@
+# Daily Journal — Reference Plugin for Scratch
+# Creates and appends to daily journal notes in a journal/ subfolder.
+# Copy this file to your notes folder: .scratch/plugins/daily-journal.yaml
+
+name: daily-journal
+version: 1.0.0
+description: Create and append to daily journal notes
+enabled: true
+
+tools:
+  - name: append
+    description: "Append a timestamped entry to today's journal note. Creates the note if it doesn't exist."
+    params:
+      text: {type: string, required: true, description: "Text to append to today's journal"}
+    action:
+      type: shell
+      command: >-
+        NOTES_DIR="${SCRATCH_NOTES_FOLDER:-.}";
+        JOURNAL_DIR="$NOTES_DIR/journal";
+        mkdir -p "$JOURNAL_DIR";
+        TODAY=$(date +%Y-%m-%d);
+        FILE="$JOURNAL_DIR/$TODAY.md";
+        if [ ! -f "$FILE" ]; then
+          printf "# Journal %s\n\n" "$TODAY" > "$FILE";
+        fi;
+        printf "\n- %s %s" "$(date +%H:%M)" "{{text}}" >> "$FILE";
+        echo "Appended to journal/$TODAY"
+      output: text
+
+  - name: read_today
+    description: "Read today's journal note"
+    params: {}
+    action:
+      type: shell
+      command: >-
+        NOTES_DIR="${SCRATCH_NOTES_FOLDER:-.}";
+        TODAY=$(date +%Y-%m-%d);
+        FILE="$NOTES_DIR/journal/$TODAY.md";
+        if [ -f "$FILE" ]; then cat "$FILE"; else echo "No journal entry for $TODAY yet."; fi
+      output: text
+
+  - name: read_date
+    description: "Read a journal note for a specific date"
+    params:
+      date: {type: string, required: true, description: "Date in YYYY-MM-DD format"}
+    action:
+      type: shell
+      command: >-
+        NOTES_DIR="${SCRATCH_NOTES_FOLDER:-.}";
+        FILE="$NOTES_DIR/journal/{{date}}.md";
+        if [ -f "$FILE" ]; then cat "$FILE"; else echo "No journal entry for {{date}}."; fi
+      output: text
+
+permissions:
+  - shell:execute
+  - notes:write
+  - notes:read
+  - folders:write

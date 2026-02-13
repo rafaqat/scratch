@@ -1,0 +1,59 @@
+# Quick Capture — Reference Plugin for Scratch
+# Append-only tool for fast note capture to an inbox note.
+# Copy this file to your notes folder: .scratch/plugins/quick-capture.yaml
+
+name: quick-capture
+version: 1.0.0
+description: Fast append-only capture to an inbox note
+enabled: true
+
+tools:
+  - name: capture
+    description: "Append a quick note to the inbox. Creates the inbox note if it doesn't exist."
+    params:
+      text: {type: string, required: true, description: "Text to capture"}
+      tag: {type: string, required: false, description: "Optional tag to prefix the entry"}
+    action:
+      type: shell
+      command: >-
+        NOTES_DIR="${SCRATCH_NOTES_FOLDER:-.}";
+        FILE="$NOTES_DIR/inbox.md";
+        if [ ! -f "$FILE" ]; then
+          printf "# Inbox\n\nQuick captures from CLI and agents.\n" > "$FILE";
+        fi;
+        TAG="{{tag}}";
+        if [ -n "$TAG" ]; then
+          printf "\n- %s [%s] %s" "$(date '+%Y-%m-%d %H:%M')" "$TAG" "{{text}}" >> "$FILE";
+        else
+          printf "\n- %s %s" "$(date '+%Y-%m-%d %H:%M')" "{{text}}" >> "$FILE";
+        fi;
+        echo "Captured to inbox"
+      output: text
+
+  - name: view_inbox
+    description: "View the current inbox contents"
+    params: {}
+    action:
+      type: shell
+      command: >-
+        NOTES_DIR="${SCRATCH_NOTES_FOLDER:-.}";
+        FILE="$NOTES_DIR/inbox.md";
+        if [ -f "$FILE" ]; then cat "$FILE"; else echo "Inbox is empty."; fi
+      output: text
+
+  - name: clear_inbox
+    description: "Clear the inbox by resetting it to the header only"
+    params: {}
+    action:
+      type: shell
+      command: >-
+        NOTES_DIR="${SCRATCH_NOTES_FOLDER:-.}";
+        FILE="$NOTES_DIR/inbox.md";
+        printf "# Inbox\n\nQuick captures from CLI and agents.\n" > "$FILE";
+        echo "Inbox cleared"
+      output: text
+
+permissions:
+  - shell:execute
+  - notes:write
+  - notes:read

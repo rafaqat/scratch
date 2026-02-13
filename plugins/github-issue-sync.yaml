@@ -1,0 +1,46 @@
+# GitHub Issue Sync — Reference Plugin for Scratch
+# Syncs GitHub issues to notes using the `gh` CLI.
+# Copy this file to your notes folder: .scratch/plugins/github-issue-sync.yaml
+
+name: github-issue-sync
+version: 1.0.0
+description: Fetch GitHub issues and sync them as notes
+enabled: true
+
+tools:
+  - name: list_issues
+    description: "List open issues from a GitHub repo as a summary"
+    params:
+      repo: {type: string, required: true, description: "Owner/repo (e.g. user/project)"}
+      limit: {type: integer, required: false, default: 30, description: "Max issues to return"}
+    action:
+      type: shell
+      command: "gh issue list --repo {{repo}} --limit {{limit}} --json number,title,state,labels,assignees,createdAt --jq '.[] | \"#\\(.number) [\\(.state)] \\(.title)\"'"
+      output: text
+
+  - name: sync_issues
+    description: "Fetch open issues from a GitHub repo and create/update a summary note"
+    params:
+      repo: {type: string, required: true, description: "Owner/repo (e.g. user/project)"}
+      limit: {type: integer, required: false, default: 30, description: "Max issues to fetch"}
+    action:
+      type: shell
+      command: >-
+        gh issue list --repo {{repo}} --limit {{limit}}
+        --json number,title,body,state,labels,assignees,createdAt
+        --jq '"# GitHub Issues: {{repo}}\n\nSynced: " + (now | strftime("%Y-%m-%d %H:%M")) + "\n\n" + ([.[] | "## #\(.number) \(.title)\n\n**State:** \(.state) | **Labels:** \([.labels[].name] | join(", ")) | **Assigned:** \([.assignees[].login] | join(", "))\n\n\(.body // "_No description_")\n\n---"] | join("\n\n"))'
+      output: text
+
+  - name: fetch_issue
+    description: "Fetch a single GitHub issue with full details"
+    params:
+      repo: {type: string, required: true, description: "Owner/repo (e.g. user/project)"}
+      number: {type: integer, required: true, description: "Issue number"}
+    action:
+      type: shell
+      command: "gh issue view {{number}} --repo {{repo}} --json number,title,body,state,labels,assignees,comments --jq '{number,title,state,body,comments: [.comments[] | {author: .author.login, body}]}'"
+      output: text
+
+permissions:
+  - shell:execute
+  - notes:write
