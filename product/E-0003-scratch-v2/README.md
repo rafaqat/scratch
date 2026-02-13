@@ -43,7 +43,7 @@ Allow notes to reference and nest other notes. Full wikilink support with backli
 
 | Story | Title | Points | Status | Depends On |
 |-------|-------|--------|--------|------------|
-| [S-0003-05](stories/S-0003-05.md) | Wikilink parser & inline block | 5 | In Progress | — |
+| [S-0003-05](stories/S-0003-05.md) | Wikilink parser & inline block | 5 | Done | — |
 | [S-0003-06](stories/S-0003-06.md) | Backlinks panel | 3 | Backlog | [05](stories/S-0003-05.md) |
 
 ## 3. Richer Blocks
@@ -96,3 +96,4 @@ Let AI agents build integrations. The MCP server already exposes 24 tools — th
 |------|---------|-------|---------|--------|
 | 2026-02-13 | v1.0.0 | Roadmap created | All 15 stories in Backlog | — |
 | 2026-02-13 | v1.0.0 | Started | S-0003-05 Wikilink parser & inline block | — |
+| 2026-02-13 | v1.0.0 | Completed | S-0003-05 Wikilink parser & inline block | `c64bc7d` |
