@@ -529,6 +529,173 @@ fn get_tools() -> Value {
                 },
                 "required": ["id"]
             }
+        },
+        // --- Database tools ---
+        {
+            "name": "db_list",
+            "description": "List all databases in the notes folder. Returns each database's name, ID (folder path), row count, and column count.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        },
+        {
+            "name": "db_get_schema",
+            "description": "Get the full schema for a database, including column definitions (id, name, type, options), views, and the next row ID counter.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "database_id": {
+                        "type": "string",
+                        "description": "Database folder path relative to notes root (e.g. 'my-tasks'). Get this from db_list."
+                    }
+                },
+                "required": ["database_id"]
+            }
+        },
+        {
+            "name": "db_query",
+            "description": "Query rows from a database with optional filtering, sorting, and pagination. Filters use field/operator/value triples. Supported operators: eq, neq, gt, gte, lt, lte, contains, not_contains, starts_with, ends_with, is_empty, is_not_empty.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "database_id": {
+                        "type": "string",
+                        "description": "Database folder path relative to notes root."
+                    },
+                    "filters": {
+                        "type": "array",
+                        "description": "Array of filter objects. Each has 'field' (column ID), 'operator' (eq, neq, gt, gte, lt, lte, contains, not_contains, starts_with, ends_with, is_empty, is_not_empty), and 'value' (comparison value, omit for is_empty/is_not_empty).",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "field": { "type": "string", "description": "Column ID to filter on" },
+                                "operator": { "type": "string", "description": "Comparison operator" },
+                                "value": { "description": "Value to compare against (string, number, or boolean)" }
+                            },
+                            "required": ["field", "operator"]
+                        }
+                    },
+                    "sort": {
+                        "type": "object",
+                        "description": "Sort configuration.",
+                        "properties": {
+                            "field": { "type": "string", "description": "Column ID to sort by" },
+                            "direction": { "type": "string", "enum": ["asc", "desc"], "description": "Sort direction. Defaults to 'asc'." }
+                        },
+                        "required": ["field"]
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of rows to return. Defaults to 50."
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Number of rows to skip (for pagination). Defaults to 0."
+                    }
+                },
+                "required": ["database_id"]
+            }
+        },
+        {
+            "name": "db_insert_row",
+            "description": "Create a new row in a database. Fields are provided as a map of column_id to value. Returns the created row with its generated ID.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "database_id": {
+                        "type": "string",
+                        "description": "Database folder path relative to notes root."
+                    },
+                    "fields": {
+                        "type": "object",
+                        "description": "Map of column_id to value. Values should match column types (string for text/date/select/url, number for number, boolean for checkbox, array of strings for multi-select)."
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Optional markdown body for the row."
+                    }
+                },
+                "required": ["database_id", "fields"]
+            }
+        },
+        {
+            "name": "db_update_row",
+            "description": "Update specific fields on an existing row. Uses etag for optimistic concurrency control — pass the etag from db_query to prevent overwriting concurrent changes. Only fields included in the patch are updated; others are preserved.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "database_id": {
+                        "type": "string",
+                        "description": "Database folder path relative to notes root."
+                    },
+                    "row_id": {
+                        "type": "string",
+                        "description": "Row ID (e.g. 'row-001')."
+                    },
+                    "etag": {
+                        "type": "string",
+                        "description": "ETag from db_query for optimistic concurrency. Prevents overwriting changes made by others."
+                    },
+                    "fields": {
+                        "type": "object",
+                        "description": "Map of column_id to new value. Only included fields are updated."
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Optional new markdown body. If omitted, existing body is preserved."
+                    }
+                },
+                "required": ["database_id", "row_id", "etag", "fields"]
+            }
+        },
+        {
+            "name": "db_delete_row",
+            "description": "Delete a row from a database by its ID. This permanently removes the row's markdown file.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "database_id": {
+                        "type": "string",
+                        "description": "Database folder path relative to notes root."
+                    },
+                    "row_id": {
+                        "type": "string",
+                        "description": "Row ID to delete (e.g. 'row-001')."
+                    }
+                },
+                "required": ["database_id", "row_id"]
+            }
+        },
+        {
+            "name": "db_create",
+            "description": "Create a new database with a schema definition. Creates a folder with a _schema.md file. Returns the database info.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Human-readable database name (e.g. 'My Tasks'). A URL-safe folder name is generated from this."
+                    },
+                    "columns": {
+                        "type": "array",
+                        "description": "Column definitions for the database.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": { "type": "string", "description": "Column identifier (used in row frontmatter keys)" },
+                                "name": { "type": "string", "description": "Human-readable column name" },
+                                "type": { "type": "string", "enum": ["text", "number", "date", "select", "multi-select", "checkbox", "relation", "url"], "description": "Column data type" },
+                                "options": { "type": "array", "items": { "type": "string" }, "description": "Required for select/multi-select: allowed option values" },
+                                "target": { "type": "string", "description": "Required for relation: target database folder name" }
+                            },
+                            "required": ["id", "name", "type"]
+                        }
+                    }
+                },
+                "required": ["name", "columns"]
+            }
         }
     ])
 }
@@ -713,6 +880,14 @@ async fn handle_tools_call(
         "stories_move" => tool_stories_move(state, &arguments).await,
         "stories_search" => tool_stories_search(state, &arguments).await,
         "stories_validate" => tool_stories_validate(state, &arguments).await,
+        // Database tools
+        "db_list" => tool_db_list(state).await,
+        "db_get_schema" => tool_db_get_schema(state, &arguments).await,
+        "db_query" => tool_db_query(state, &arguments).await,
+        "db_insert_row" => tool_db_insert_row(state, &arguments).await,
+        "db_update_row" => tool_db_update_row(state, &arguments).await,
+        "db_delete_row" => tool_db_delete_row(state, &arguments).await,
+        "db_create" => tool_db_create(state, &arguments).await,
         // Plugin-defined tools (prefixed with "plugin_")
         _ => {
             match crate::plugins::try_dispatch_plugin_tool(tool_name, &arguments, state).await {
@@ -1124,5 +1299,133 @@ async fn tool_stories_validate(state: &AppState, args: &Value) -> Result<String,
         .to_string();
 
     let result = crate::validate_story_impl(id, state).await?;
+    serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+}
+
+// --- Database tool handlers ---
+
+async fn tool_db_list(state: &AppState) -> Result<String, String> {
+    let result = crate::db_list_impl(state).await?;
+    serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+}
+
+async fn tool_db_get_schema(state: &AppState, args: &Value) -> Result<String, String> {
+    let database_id = args
+        .get("database_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: database_id")?
+        .to_string();
+
+    let result = crate::db_get_schema_impl(database_id, state).await?;
+    serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+}
+
+async fn tool_db_query(state: &AppState, args: &Value) -> Result<String, String> {
+    let database_id = args
+        .get("database_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: database_id")?
+        .to_string();
+
+    let filters = args.get("filters").cloned();
+    let sort = args.get("sort").cloned();
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(50) as usize;
+    let offset = args
+        .get("offset")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+
+    let result = crate::db_query_impl(database_id, filters, sort, limit, offset, state).await?;
+    serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+}
+
+async fn tool_db_insert_row(state: &AppState, args: &Value) -> Result<String, String> {
+    let database_id = args
+        .get("database_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: database_id")?
+        .to_string();
+
+    let fields = args
+        .get("fields")
+        .ok_or("Missing required parameter: fields")?
+        .clone();
+
+    let body = args
+        .get("body")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let result = crate::db_insert_row_impl(database_id, fields, body, state).await?;
+    serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+}
+
+async fn tool_db_update_row(state: &AppState, args: &Value) -> Result<String, String> {
+    let database_id = args
+        .get("database_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: database_id")?
+        .to_string();
+
+    let row_id = args
+        .get("row_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: row_id")?
+        .to_string();
+
+    let etag = args
+        .get("etag")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: etag")?
+        .to_string();
+
+    let fields = args
+        .get("fields")
+        .ok_or("Missing required parameter: fields")?
+        .clone();
+
+    let body = args
+        .get("body")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let result =
+        crate::db_update_row_impl(database_id, row_id, etag, fields, body, state).await?;
+    serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+}
+
+async fn tool_db_delete_row(state: &AppState, args: &Value) -> Result<String, String> {
+    let database_id = args
+        .get("database_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: database_id")?
+        .to_string();
+
+    let row_id = args
+        .get("row_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: row_id")?
+        .to_string();
+
+    let result = crate::db_delete_row_impl(database_id, row_id, state).await?;
+    serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
+}
+
+async fn tool_db_create(state: &AppState, args: &Value) -> Result<String, String> {
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: name")?
+        .to_string();
+
+    let columns = args
+        .get("columns")
+        .ok_or("Missing required parameter: columns")?
+        .clone();
+
+    let result = crate::db_create_impl(name, columns, state).await?;
     serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
 }
