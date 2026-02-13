@@ -482,3 +482,285 @@ html.dark {
 .slide-in-from-right-2 {
   animation-name: tooltip-slide-in-from-right;
 }
+
+/* Callout block */
+.callout {
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 6px;
+  margin: 4px 0;
+  border-left: 3px solid;
+  min-height: 40px;
+  align-items: flex-start;
+}
+
+.callout-content {
+  flex: 1;
+  min-width: 0;
+  line-height: var(--editor-line-height);
+}
+
+/* Callout type colors: blue (info), yellow (warning), green (tip), red (danger), gray (note) */
+.callout-blue {
+  background: rgba(59, 130, 246, 0.08);
+  border-left-color: #3b82f6;
+}
+
+.callout-yellow {
+  background: rgba(234, 179, 8, 0.08);
+  border-left-color: #eab308;
+}
+
+.callout-green {
+  background: rgba(34, 197, 94, 0.08);
+  border-left-color: #22c55e;
+}
+
+.callout-red {
+  background: rgba(239, 68, 68, 0.08);
+  border-left-color: #ef4444;
+}
+
+.callout-gray {
+  background: var(--color-bg-muted);
+  border-left-color: var(--color-text-muted);
+}
+
+/* Dark mode callout adjustments */
+.dark .callout-blue {
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.dark .callout-yellow {
+  background: rgba(234, 179, 8, 0.12);
+}
+
+.dark .callout-green {
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.dark .callout-red {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+/* Callout icon button and type picker */
+.callout-icon-wrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.callout-icon-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  padding: 0;
+  margin-top: 1px;
+}
+
+.callout-icon-button:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.dark .callout-icon-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.callout-emoji {
+  font-size: 1.1em;
+  line-height: 1;
+}
+
+.callout-type-picker {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 50;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  padding: 4px;
+  min-width: 140px;
+  margin-top: 4px;
+}
+
+.dark .callout-type-picker {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.callout-type-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--color-text);
+  transition: background 0.1s ease;
+}
+
+.callout-type-option:hover {
+  background: var(--color-bg-muted);
+}
+
+.callout-type-option.active {
+  background: var(--color-bg-emphasis);
+  font-weight: 500;
+}
+
+/* Equation block */
+.equation-block {
+  margin: 8px 0;
+  border-radius: 6px;
+  user-select: none;
+}
+
+.equation-block-display {
+  padding: 16px;
+  text-align: center;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.equation-block-display:hover {
+  border-color: var(--color-border);
+  background: var(--color-bg-muted);
+}
+
+.equation-block-editing {
+  padding: 12px 16px;
+  background: var(--color-bg-muted);
+  border: 1px solid var(--color-border);
+}
+
+.equation-edit-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.equation-input {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 36px;
+  outline: none;
+}
+
+.equation-input:focus {
+  border-color: var(--color-accent);
+}
+
+.equation-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.equation-preview {
+  padding: 8px;
+  text-align: center;
+  min-height: 24px;
+}
+
+.equation-hint {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  text-align: right;
+  margin-top: 4px;
+}
+
+.equation-rendered {
+  min-height: 24px;
+}
+
+.equation-placeholder {
+  color: var(--color-text-muted);
+  font-style: italic;
+  font-size: 0.9em;
+}
+
+.equation-error {
+  color: #dc2626;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+
+/* KaTeX display math centering */
+.equation-block .katex-display {
+  margin: 0;
+  padding: 0;
+}
+
+/* Inline equation */
+.inline-equation {
+  display: inline;
+  vertical-align: baseline;
+}
+
+.inline-equation-display {
+  cursor: pointer;
+  padding: 1px 2px;
+  border-radius: 3px;
+  transition: background 0.15s ease;
+}
+
+.inline-equation-display:hover {
+  background: var(--color-bg-muted);
+}
+
+.inline-equation-editing {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--color-bg-muted);
+  border: 1px solid var(--color-border);
+}
+
+.inline-equation-dollar {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  opacity: 0.6;
+}
+
+.inline-equation-input {
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  padding: 0;
+  outline: none;
+  min-width: 40px;
+}
+
+.inline-equation-rendered {
+  display: inline;
+}
+
+.inline-equation-placeholder {
+  color: var(--color-text-muted);
+  font-style: italic;
+  font-size: 0.85em;
+}

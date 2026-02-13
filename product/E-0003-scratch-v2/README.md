@@ -73,7 +73,7 @@ Let AI agents build integrations. The MCP server already exposes 24 tools — th
 | Story | Title | Points | Status | Depends On |
 |-------|-------|--------|--------|------------|
 | [S-0003-13](stories/S-0003-13.md) | Webhook receiver | 3 | Done | — |
-| [S-0003-14](stories/S-0003-14.md) | Plugin manifest system | 5 | Backlog | — |
+| [S-0003-14](stories/S-0003-14.md) | Plugin manifest system | 5 | In Progress | — |
 | [S-0003-15](stories/S-0003-15.md) | Built-in reference plugins | 2 | Backlog | [14](stories/S-0003-14.md) |
 
 ---
@@ -105,3 +105,5 @@ Let AI agents build integrations. The MCP server already exposes 24 tools — th
 | 2026-02-13 | v1.0.0 | Started | S-0003-07 Callout block | — |
 | 2026-02-13 | v1.0.0 | Started | S-0003-08 Equation block | — |
 | 2026-02-13 | v1.0.0 | Completed | S-0003-10 Table of contents block | `8228c0f` |
+| 2026-02-13 | v1.0.0 | Completed | S-0003-13 Webhook receiver | `a556d40` |
+| 2026-02-13 | v1.0.0 | Started | S-0003-14 Plugin manifest system | — |

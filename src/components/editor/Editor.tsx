@@ -20,6 +20,7 @@ import { mod, shift, isMac } from "../../lib/platform";
 import { parseFrontmatter, recombine, type StoryFrontmatter } from "../../lib/frontmatter";
 import { preprocessSvg, postprocessSvg } from "../../lib/svg";
 import { preprocessCallouts, postprocessCallouts } from "../../lib/callout";
+import { postprocessEquations } from "../../lib/equation";
 import { injectWikilinks } from "../../lib/wikilink";
 import { getWikilinkMenuItems, updateNoteTitles } from "./Wikilink";
 import { schema } from "./schema";
@@ -122,9 +123,9 @@ function getCustomSlashMenuItems(
       title: "Callout",
       onItemClick: () => {
         insertOrUpdateBlockForSlashMenu(editor, {
-          type: "callout" as never,
+          type: "callout",
           props: { type: "info" },
-        });
+        } as never);
       },
       aliases: ["callout", "alert", "admonition", "note", "warning", "tip"],
       group: "Basic blocks",
@@ -190,6 +191,14 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
   // Keep ref in sync with current note ID
   currentNoteIdRef.current = currentNote?.id ?? null;
 
+  // Track notes list version for backlinks refresh (increments when notes array changes)
+  const notesVersionRef = useRef(0);
+  const [notesVersion, setNotesVersion] = useState(0);
+  useEffect(() => {
+    notesVersionRef.current += 1;
+    setNotesVersion(notesVersionRef.current);
+  }, [notes]);
+
   // Keep wikilink broken-link detection in sync with notes list
   useEffect(() => {
     updateNoteTitles(notes);
@@ -242,7 +251,7 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
       setIsSaving(true);
       try {
         // Restore SVG code blocks and callout blocks to markdown syntax
-        const body = postprocessCallouts(postprocessSvg(content));
+        const body = postprocessEquations(postprocessCallouts(postprocessSvg(content)));
         // Recombine frontmatter with body if this is a story file
         const fm = storyFrontmatterRef.current;
         const fullContent = fm ? recombine(fm, body) : body;
@@ -401,7 +410,7 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
         needsSaveRef.current = false;
         try {
           let markdown = editor.blocksToMarkdownLossy(editor.document);
-          markdown = postprocessCallouts(postprocessSvg(markdown));
+          markdown = postprocessEquations(postprocessCallouts(postprocessSvg(markdown)));
           const fm = storyFrontmatterRef.current;
           saveNote(fm ? recombine(fm, markdown) : markdown);
         } catch {
@@ -755,6 +764,7 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
           <BacklinksPanel
             noteTitle={currentNote.title}
             noteId={currentNote.id}
+            refreshTrigger={notesVersion}
             onNavigate={(noteId) => selectNote(noteId)}
           />
         </div>
