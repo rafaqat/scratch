@@ -2942,6 +2942,474 @@ pub async fn validate_story_impl(
     }))
 }
 
+// --- Database _impl functions ---
+
+pub async fn db_list_impl(state: &AppState) -> Result<serde_json::Value, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config
+            .notes_folder
+            .clone()
+            .ok_or("Notes folder not set")?
+    };
+
+    let databases = database::scan_databases(&PathBuf::from(&folder))?;
+    Ok(serde_json::json!({ "databases": databases }))
+}
+
+pub async fn db_get_schema_impl(
+    database_id: String,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config
+            .notes_folder
+            .clone()
+            .ok_or("Notes folder not set")?
+    };
+
+    let db_folder = PathBuf::from(&folder).join(&database_id);
+    if !database::is_database_folder(&db_folder) {
+        return Err(format!("'{}' is not a database folder", database_id));
+    }
+
+    let schema = database::load_schema(&db_folder)?;
+    Ok(serde_json::json!({
+        "database_id": database_id,
+        "schema": schema,
+    }))
+}
+
+pub async fn db_query_impl(
+    database_id: String,
+    filters: Option<serde_json::Value>,
+    sort: Option<serde_json::Value>,
+    limit: usize,
+    offset: usize,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config
+            .notes_folder
+            .clone()
+            .ok_or("Notes folder not set")?
+    };
+    let notes_folder = PathBuf::from(&folder);
+
+    let (schema, mut rows) = database::get_database(&notes_folder, &database_id)?;
+
+    // Apply filters
+    if let Some(filter_val) = filters {
+        if let Some(filter_arr) = filter_val.as_array() {
+            for filter in filter_arr {
+                let field = filter
+                    .get("field")
+                    .and_then(|v| v.as_str())
+                    .ok_or("Filter missing 'field'")?;
+                let operator = filter
+                    .get("operator")
+                    .and_then(|v| v.as_str())
+                    .ok_or("Filter missing 'operator'")?;
+                let value = filter.get("value");
+
+                rows.retain(|row| {
+                    let row_val = row.fields.get(field);
+                    match operator {
+                        "eq" => match (row_val, value) {
+                            (Some(rv), Some(fv)) => rv == fv,
+                            (None, None) => true,
+                            _ => false,
+                        },
+                        "neq" => match (row_val, value) {
+                            (Some(rv), Some(fv)) => rv != fv,
+                            (None, None) => false,
+                            _ => true,
+                        },
+                        "gt" => compare_values(row_val, value, |a, b| a > b),
+                        "gte" => compare_values(row_val, value, |a, b| a >= b),
+                        "lt" => compare_values(row_val, value, |a, b| a < b),
+                        "lte" => compare_values(row_val, value, |a, b| a <= b),
+                        "contains" => {
+                            let needle = value
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_lowercase();
+                            match row_val {
+                                Some(serde_json::Value::String(s)) => {
+                                    s.to_lowercase().contains(&needle)
+                                }
+                                Some(serde_json::Value::Array(arr)) => arr.iter().any(|item| {
+                                    item.as_str()
+                                        .map(|s| s.to_lowercase() == needle)
+                                        .unwrap_or(false)
+                                }),
+                                _ => false,
+                            }
+                        }
+                        "not_contains" => {
+                            let needle = value
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_lowercase();
+                            match row_val {
+                                Some(serde_json::Value::String(s)) => {
+                                    !s.to_lowercase().contains(&needle)
+                                }
+                                Some(serde_json::Value::Array(arr)) => !arr.iter().any(|item| {
+                                    item.as_str()
+                                        .map(|s| s.to_lowercase() == needle)
+                                        .unwrap_or(false)
+                                }),
+                                None => true,
+                                _ => true,
+                            }
+                        }
+                        "starts_with" => {
+                            let prefix = value
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_lowercase();
+                            row_val
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_lowercase().starts_with(&prefix))
+                                .unwrap_or(false)
+                        }
+                        "ends_with" => {
+                            let suffix = value
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_lowercase();
+                            row_val
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_lowercase().ends_with(&suffix))
+                                .unwrap_or(false)
+                        }
+                        "is_empty" => match row_val {
+                            None => true,
+                            Some(serde_json::Value::String(s)) => s.is_empty(),
+                            Some(serde_json::Value::Array(a)) => a.is_empty(),
+                            Some(serde_json::Value::Null) => true,
+                            _ => false,
+                        },
+                        "is_not_empty" => match row_val {
+                            None => false,
+                            Some(serde_json::Value::String(s)) => !s.is_empty(),
+                            Some(serde_json::Value::Array(a)) => !a.is_empty(),
+                            Some(serde_json::Value::Null) => false,
+                            _ => true,
+                        },
+                        _ => true, // Unknown operator: no filter
+                    }
+                });
+            }
+        }
+    }
+
+    // Apply sorting
+    if let Some(sort_val) = sort {
+        let sort_field = sort_val
+            .get("field")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let sort_desc = sort_val
+            .get("direction")
+            .and_then(|v| v.as_str())
+            .map(|d| d == "desc")
+            .unwrap_or(false);
+
+        if !sort_field.is_empty() {
+            rows.sort_by(|a, b| {
+                let va = a.fields.get(sort_field);
+                let vb = b.fields.get(sort_field);
+                let ord = compare_json_values(va, vb);
+                if sort_desc {
+                    ord.reverse()
+                } else {
+                    ord
+                }
+            });
+        }
+    }
+
+    let total = rows.len();
+
+    // Apply pagination
+    let paginated: Vec<_> = rows.into_iter().skip(offset).take(limit).collect();
+
+    // Compute etags for each row (for concurrency control on update)
+    let rows_with_etag: Vec<serde_json::Value> = paginated
+        .iter()
+        .map(|row| {
+            let row_path = std::path::Path::new(&row.path);
+            let content = std::fs::read_to_string(row_path).unwrap_or_default();
+            let etag = stories::compute_etag(&content);
+            serde_json::json!({
+                "id": row.id,
+                "fields": row.fields,
+                "body": row.body,
+                "etag": etag,
+                "modified": row.modified,
+            })
+        })
+        .collect();
+
+    Ok(serde_json::json!({
+        "database_id": database_id,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "rows": rows_with_etag,
+        "columns": schema.columns.iter().map(|c| serde_json::json!({
+            "id": c.id,
+            "name": c.name,
+            "type": c.col_type.as_str(),
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+/// Compare two JSON values for filter operations (gt, gte, lt, lte).
+fn compare_values(
+    row_val: Option<&serde_json::Value>,
+    filter_val: Option<&serde_json::Value>,
+    cmp: fn(f64, f64) -> bool,
+) -> bool {
+    match (row_val, filter_val) {
+        (Some(rv), Some(fv)) => {
+            // Try numeric comparison first
+            let rn = rv.as_f64();
+            let fn_ = fv.as_f64();
+            if let (Some(a), Some(b)) = (rn, fn_) {
+                return cmp(a, b);
+            }
+            // Fall back to string comparison
+            let rs = rv.as_str().unwrap_or("");
+            let fs = fv.as_str().unwrap_or("");
+            let ord = rs.cmp(fs);
+            match ord {
+                std::cmp::Ordering::Less => cmp(-1.0, 0.0),
+                std::cmp::Ordering::Equal => cmp(0.0, 0.0),
+                std::cmp::Ordering::Greater => cmp(1.0, 0.0),
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Compare two optional JSON values for sorting.
+fn compare_json_values(
+    a: Option<&serde_json::Value>,
+    b: Option<&serde_json::Value>,
+) -> std::cmp::Ordering {
+    match (a, b) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (None, Some(_)) => std::cmp::Ordering::Less,
+        (Some(_), None) => std::cmp::Ordering::Greater,
+        (Some(va), Some(vb)) => {
+            // Numeric comparison
+            if let (Some(na), Some(nb)) = (va.as_f64(), vb.as_f64()) {
+                return na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal);
+            }
+            // Boolean comparison
+            if let (Some(ba), Some(bb)) = (va.as_bool(), vb.as_bool()) {
+                return ba.cmp(&bb);
+            }
+            // String comparison (covers text, date, select, url)
+            let sa = va.as_str().unwrap_or("");
+            let sb = vb.as_str().unwrap_or("");
+            sa.cmp(sb)
+        }
+    }
+}
+
+pub async fn db_insert_row_impl(
+    database_id: String,
+    fields_val: serde_json::Value,
+    body: Option<String>,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config
+            .notes_folder
+            .clone()
+            .ok_or("Notes folder not set")?
+    };
+    let notes_folder = PathBuf::from(&folder);
+
+    // Convert JSON Value to HashMap<String, JsonValue>
+    let fields: std::collections::HashMap<String, serde_json::Value> = fields_val
+        .as_object()
+        .ok_or("'fields' must be a JSON object")?
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    let row = database::create_row(&notes_folder, &database_id, fields, body)?;
+
+    Ok(serde_json::json!({
+        "row": {
+            "id": row.id,
+            "fields": row.fields,
+            "body": row.body,
+            "path": row.path,
+            "modified": row.modified,
+        }
+    }))
+}
+
+pub async fn db_update_row_impl(
+    database_id: String,
+    row_id: String,
+    etag: String,
+    fields_val: serde_json::Value,
+    body: Option<String>,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config
+            .notes_folder
+            .clone()
+            .ok_or("Notes folder not set")?
+    };
+    let notes_folder = PathBuf::from(&folder);
+
+    // Check etag for concurrency control
+    let db_folder = notes_folder.join(&database_id);
+    let row_path = db_folder.join(format!("{}.md", row_id));
+    if !row_path.exists() {
+        return Err(format!(
+            "Row '{}' not found in database '{}'",
+            row_id, database_id
+        ));
+    }
+
+    let current_content = std::fs::read_to_string(&row_path)
+        .map_err(|e| format!("Failed to read row file: {}", e))?;
+    let current_etag = stories::compute_etag(&current_content);
+
+    if current_etag != etag {
+        return Err(format!(
+            "CONFLICT: etag mismatch. Expected '{}', got '{}'. Refetch the row via db_query to get the latest etag.",
+            etag, current_etag
+        ));
+    }
+
+    // Convert JSON Value to HashMap
+    let fields: std::collections::HashMap<String, serde_json::Value> = fields_val
+        .as_object()
+        .ok_or("'fields' must be a JSON object")?
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    let row = database::update_row(&notes_folder, &database_id, &row_id, fields, body)?;
+
+    // Compute new etag
+    let new_content = std::fs::read_to_string(&row.path)
+        .map_err(|e| format!("Failed to read updated row: {}", e))?;
+    let new_etag = stories::compute_etag(&new_content);
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "row": {
+            "id": row.id,
+            "fields": row.fields,
+            "body": row.body,
+            "etag": new_etag,
+            "modified": row.modified,
+        }
+    }))
+}
+
+pub async fn db_delete_row_impl(
+    database_id: String,
+    row_id: String,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config
+            .notes_folder
+            .clone()
+            .ok_or("Notes folder not set")?
+    };
+    let notes_folder = PathBuf::from(&folder);
+
+    database::delete_row(&notes_folder, &database_id, &row_id)?;
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "deleted": { "database_id": database_id, "row_id": row_id }
+    }))
+}
+
+pub async fn db_create_impl(
+    name: String,
+    columns_val: serde_json::Value,
+    state: &AppState,
+) -> Result<serde_json::Value, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config
+            .notes_folder
+            .clone()
+            .ok_or("Notes folder not set")?
+    };
+    let notes_folder = PathBuf::from(&folder);
+
+    // Parse column definitions from JSON
+    let columns_arr = columns_val
+        .as_array()
+        .ok_or("'columns' must be a JSON array")?;
+
+    let mut columns: Vec<database::ColumnDef> = Vec::new();
+    for col_val in columns_arr {
+        let id = col_val
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or("Column missing 'id'")?
+            .to_string();
+        let col_name = col_val
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or("Column missing 'name'")?
+            .to_string();
+        let col_type_str = col_val
+            .get("type")
+            .and_then(|v| v.as_str())
+            .ok_or("Column missing 'type'")?;
+        let col_type = database::ColumnType::from_str(col_type_str)?;
+
+        let options = col_val.get("options").and_then(|v| v.as_array()).map(|arr| {
+            arr.iter()
+                .filter_map(|item| item.as_str().map(String::from))
+                .collect()
+        });
+
+        let target = col_val
+            .get("target")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        columns.push(database::ColumnDef {
+            id,
+            name: col_name,
+            col_type,
+            options,
+            target,
+        });
+    }
+
+    let db_info = database::create_database(&notes_folder, &name, columns, None)?;
+
+    Ok(serde_json::json!({
+        "database": db_info,
+    }))
+}
+
 // File watcher event payload
 #[derive(Clone, Serialize)]
 struct FileChangeEvent {
@@ -4062,6 +4530,43 @@ fn db_update_schema(
     database::update_schema(&folder, &db_id, schema)
 }
 
+/// Serializable row template info for the frontend.
+#[derive(Serialize, Deserialize)]
+struct RowTemplateInfo {
+    id: String,
+    name: String,
+    title: Option<String>,
+    fields: std::collections::HashMap<String, serde_json::Value>,
+    body: Option<String>,
+}
+
+#[tauri::command]
+fn db_list_templates(
+    db_id: String,
+    state: State<AppState>,
+) -> Result<Vec<RowTemplateInfo>, String> {
+    let folder = get_notes_folder_path(&state)?;
+    let templates = database::list_row_templates(&folder, &db_id)?;
+    Ok(templates.into_iter().map(|(id, t)| RowTemplateInfo {
+        id,
+        name: t.name,
+        title: t.title,
+        fields: t.fields,
+        body: t.body,
+    }).collect())
+}
+
+#[tauri::command]
+fn db_create_row_from_template(
+    db_id: String,
+    template_name: String,
+    variables: std::collections::HashMap<String, String>,
+    state: State<AppState>,
+) -> Result<database::DatabaseRow, String> {
+    let folder = get_notes_folder_path(&state)?;
+    database::create_row_from_template(&folder, &db_id, &template_name, variables)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -4175,6 +4680,8 @@ pub fn run() {
             db_remove_column,
             db_rename_column,
             db_update_schema,
+            db_list_templates,
+            db_create_row_from_template,
             list_templates,
             read_template,
             create_note_from_template,

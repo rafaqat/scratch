@@ -21,9 +21,12 @@ import { parseFrontmatter, recombine, type StoryFrontmatter } from "../../lib/fr
 import { preprocessSvg, postprocessSvg } from "../../lib/svg";
 import { preprocessCallouts, postprocessCallouts } from "../../lib/callout";
 import { postprocessEquations } from "../../lib/equation";
+import { preprocessBookmarks, postprocessBookmarks } from "../../lib/bookmark";
+import { preprocessDatabaseRefs, postprocessDatabaseRefs } from "../../lib/databaseRef";
 import { injectWikilinks } from "../../lib/wikilink";
 import { getWikilinkMenuItems, updateNoteTitles } from "./Wikilink";
 import { schema } from "./schema";
+import { DatabaseIcon } from "./DatabaseTable";
 import { StoryMetaCard } from "./StoryMetaCard";
 import { BacklinksPanel } from "./BacklinksPanel";
 
@@ -110,8 +113,25 @@ const EquationIcon = () => (
   </svg>
 );
 
+// Bookmark icon for slash menu (Lucide bookmark / link)
+const BookmarkIcon = () => (
+  <svg
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+  </svg>
+);
+
 /**
- * Build custom slash menu items with the default items plus TOC, Callout, and Equation.
+ * Build custom slash menu items with the default items plus TOC, Callout, Equation, and Bookmark.
  */
 function getCustomSlashMenuItems(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -144,6 +164,32 @@ function getCustomSlashMenuItems(
       group: "Advanced",
       icon: <EquationIcon />,
       subtext: "Display math equation with LaTeX",
+    },
+    {
+      title: "Bookmark",
+      onItemClick: () => {
+        insertOrUpdateBlockForSlashMenu(editor, {
+          type: "bookmark",
+          props: { url: "" },
+        } as never);
+      },
+      aliases: ["bookmark", "link", "embed", "url", "web"],
+      group: "Advanced",
+      icon: <BookmarkIcon />,
+      subtext: "URL preview card with title and description",
+    },
+    {
+      title: "Database",
+      onItemClick: () => {
+        insertOrUpdateBlockForSlashMenu(editor, {
+          type: "databaseTable" as never,
+          props: { databaseName: "" } as never,
+        });
+      },
+      aliases: ["database", "table view", "database table", "db"],
+      group: "Advanced",
+      icon: <DatabaseIcon />,
+      subtext: "Editable table view of a database",
     },
     {
       title: "Table of Contents",
@@ -253,7 +299,7 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
       setIsSaving(true);
       try {
         // Restore SVG code blocks and callout blocks to markdown syntax
-        const body = postprocessEquations(postprocessCallouts(postprocessSvg(content)));
+        const body = postprocessDatabaseRefs(postprocessBookmarks(postprocessEquations(postprocessCallouts(postprocessSvg(content)))));
         // Recombine frontmatter with body if this is a story file
         const fm = storyFrontmatterRef.current;
         const fullContent = fm ? recombine(fm, body) : body;
@@ -323,7 +369,7 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
       setStoryFrontmatter(null);
       body = content;
     }
-    return preprocessSvg(preprocessCallouts(body));
+    return preprocessSvg(preprocessDatabaseRefs(preprocessBookmarks(preprocessCallouts(body))));
   }, []);
 
   // Load note content when the current note changes
@@ -426,7 +472,7 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
         needsSaveRef.current = false;
         try {
           let markdown = editor.blocksToMarkdownLossy(editor.document);
-          markdown = postprocessEquations(postprocessCallouts(postprocessSvg(markdown)));
+          markdown = postprocessDatabaseRefs(postprocessBookmarks(postprocessEquations(postprocessCallouts(postprocessSvg(markdown)))));
           const fm = storyFrontmatterRef.current;
           saveNote(fm ? recombine(fm, markdown) : markdown);
         } catch {
