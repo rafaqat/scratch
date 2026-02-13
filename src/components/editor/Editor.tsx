@@ -1,9 +1,8 @@
 import { useEffect, useRef, useCallback, useState } from "react";
-import { useCreateBlockNote } from "@blocknote/react";
+import { useCreateBlockNote, SuggestionMenuController } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
-import type { BlockNoteEditor } from "@blocknote/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
@@ -11,6 +10,8 @@ import { toast } from "sonner";
 import { mod, shift, isMac } from "../../lib/platform";
 import { parseFrontmatter, recombine, type StoryFrontmatter } from "../../lib/frontmatter";
 import { preprocessSvg, postprocessSvg } from "../../lib/svg";
+import { injectWikilinks } from "../../lib/wikilink";
+import { schema, getWikilinkMenuItems, updateNoteTitles } from "./Wikilink";
 import { StoryMetaCard } from "./StoryMetaCard";
 
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -49,9 +50,11 @@ interface EditorProps {
 
 export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
   const {
+    notes,
     currentNote,
     saveNote,
     createNote,
+    selectNote,
     hasExternalChanges,
     reloadCurrentNote,
     reloadVersion,
@@ -73,8 +76,13 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
   // Keep ref in sync with current note ID
   currentNoteIdRef.current = currentNote?.id ?? null;
 
-  // Create BlockNote editor
-  const editor = useCreateBlockNote();
+  // Keep wikilink broken-link detection in sync with notes list
+  useEffect(() => {
+    updateNoteTitles(notes);
+  }, [notes]);
+
+  // Create BlockNote editor with custom schema (wikilinks)
+  const editor = useCreateBlockNote({ schema });
 
   // Track which note's content is currently loaded in the editor
   const loadedNoteIdRef = useRef<string | null>(null);
@@ -84,7 +92,7 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
 
   // Get markdown from BlockNote editor
   const getMarkdown = useCallback(
-    (editorInstance: BlockNoteEditor) => {
+    (editorInstance: typeof editor) => {
       try {
         return editorInstance.blocksToMarkdownLossy(editorInstance.document);
       } catch {
@@ -214,7 +222,7 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
 
         try {
           const body = extractBody(currentNote.content);
-          const blocks = editor.tryParseMarkdownToBlocks(body);
+          const blocks = injectWikilinks(editor.tryParseMarkdownToBlocks(body));
           editor.replaceBlocks(editor.document, blocks);
         } catch {
           // Fallback: ignore parse errors
@@ -248,7 +256,7 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
     // Parse frontmatter and load body into BlockNote
     try {
       const body = extractBody(currentNote.content);
-      const blocks = editor.tryParseMarkdownToBlocks(body);
+      const blocks = injectWikilinks(editor.tryParseMarkdownToBlocks(body));
       if (loadedNoteIdRef.current !== loadingNoteId) return;
       editor.replaceBlocks(editor.document, blocks);
     } catch {
@@ -301,6 +309,32 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
+
+  // Wikilink navigation: listen for click events from wikilink nodes
+  useEffect(() => {
+    const handleNavigate = (e: Event) => {
+      const title = (e as CustomEvent).detail?.title;
+      if (!title) return;
+      const target = notes.find(
+        (n) => n.title.toLowerCase() === title.toLowerCase(),
+      );
+      if (target) {
+        selectNote(target.id);
+      } else {
+        toast.error(`Note "${title}" not found`);
+      }
+    };
+    window.addEventListener("wikilink-navigate", handleNavigate);
+    return () => window.removeEventListener("wikilink-navigate", handleNavigate);
+  }, [notes, selectNote]);
+
+  // Wikilink suggestion menu items
+  const getWikilinkItems = useCallback(
+    async (query: string) => {
+      return getWikilinkMenuItems(editor, notes, query);
+    },
+    [editor, notes],
+  );
 
   // Image handler
   const handleAddImage = useCallback(async () => {
@@ -588,7 +622,12 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
             editor={editor}
             theme={resolvedTheme}
             onChange={handleEditorChange}
-          />
+          >
+            <SuggestionMenuController
+              triggerCharacter="[["
+              getItems={getWikilinkItems}
+            />
+          </BlockNoteView>
         </div>
       </div>
     </div>

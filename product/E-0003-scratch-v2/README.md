@@ -2,7 +2,7 @@
 
 > Close the gap with Notion. Epic **E-0003-scratch-v2** — 15 stories across 5 features.
 
-**Current version:** v0.4.0 · **Target:** v0.5.0
+**Current version:** v1.0.0 · **Target:** v1.1.0
 **Created:** 2026-02-13 · **Last updated:** 2026-02-13
 
 ## Status
@@ -43,7 +43,7 @@ Allow notes to reference and nest other notes. Full wikilink support with backli
 
 | Story | Title | Points | Status | Depends On |
 |-------|-------|--------|--------|------------|
-| [S-0003-05](stories/S-0003-05.md) | Wikilink parser & inline block | 5 | Backlog | — |
+| [S-0003-05](stories/S-0003-05.md) | Wikilink parser & inline block | 5 | In Progress | — |
 | [S-0003-06](stories/S-0003-06.md) | Backlinks panel | 3 | Backlog | [05](stories/S-0003-05.md) |
 
 ## 3. Richer Blocks
@@ -94,4 +94,5 @@ Let AI agents build integrations. The MCP server already exposes 24 tools — th
 
 | Date | Version | Event | Stories | Commit |
 |------|---------|-------|---------|--------|
-| 2026-02-13 | v0.4.0 | Roadmap created | All 15 stories in Backlog | — |
+| 2026-02-13 | v1.0.0 | Roadmap created | All 15 stories in Backlog | — |
+| 2026-02-13 | v1.0.0 | Started | S-0003-05 Wikilink parser & inline block | — |

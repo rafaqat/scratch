@@ -226,6 +226,67 @@ html.dark {
   font-size: var(--editor-h3-size);
 }
 
+/* Wikilink inline content */
+.wikilink {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(59, 130, 246, 0.1);
+  color: #2563eb;
+  font-size: 0.95em;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s ease;
+}
+
+.wikilink::before {
+  content: "[[";
+  opacity: 0.4;
+  font-size: 0.85em;
+}
+
+.wikilink::after {
+  content: "]]";
+  opacity: 0.4;
+  font-size: 0.85em;
+}
+
+.wikilink:hover {
+  background: rgba(59, 130, 246, 0.2);
+  text-decoration: underline;
+}
+
+.dark .wikilink {
+  background: rgba(96, 165, 250, 0.15);
+  color: #60a5fa;
+}
+
+.dark .wikilink:hover {
+  background: rgba(96, 165, 250, 0.25);
+}
+
+/* Broken wikilink (target note doesn't exist) */
+.wikilink-broken {
+  background: rgba(239, 68, 68, 0.08);
+  color: #dc2626;
+  text-decoration: underline;
+  text-decoration-style: dashed;
+  text-underline-offset: 2px;
+}
+
+.wikilink-broken:hover {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.dark .wikilink-broken {
+  background: rgba(248, 113, 113, 0.1);
+  color: #f87171;
+}
+
+.dark .wikilink-broken:hover {
+  background: rgba(248, 113, 113, 0.2);
+}
+
 /* Radix UI tooltip animations */
 @keyframes tooltip-fade-in {
   from {
