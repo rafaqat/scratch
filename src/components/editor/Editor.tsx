@@ -1,8 +1,17 @@
 import { useEffect, useRef, useCallback, useState } from "react";
-import { useCreateBlockNote, SuggestionMenuController } from "@blocknote/react";
+import {
+  useCreateBlockNote,
+  SuggestionMenuController,
+  getDefaultReactSlashMenuItems,
+} from "@blocknote/react";
+import {
+  filterSuggestionItems,
+  insertOrUpdateBlockForSlashMenu,
+} from "@blocknote/core/extensions";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
+import "katex/dist/katex.min.css";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
@@ -10,9 +19,12 @@ import { toast } from "sonner";
 import { mod, shift, isMac } from "../../lib/platform";
 import { parseFrontmatter, recombine, type StoryFrontmatter } from "../../lib/frontmatter";
 import { preprocessSvg, postprocessSvg } from "../../lib/svg";
+import { preprocessCallouts, postprocessCallouts } from "../../lib/callout";
 import { injectWikilinks } from "../../lib/wikilink";
-import { schema, getWikilinkMenuItems, updateNoteTitles } from "./Wikilink";
+import { getWikilinkMenuItems, updateNoteTitles } from "./Wikilink";
+import { schema } from "./schema";
 import { StoryMetaCard } from "./StoryMetaCard";
+import { BacklinksPanel } from "./BacklinksPanel";
 
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useNotes } from "../../context/NotesContext";
@@ -41,6 +53,108 @@ function formatDateTime(timestamp: number): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+// TOC icon for slash menu (Lucide list-tree)
+const TocIcon = () => (
+  <svg
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M21 12h-8" />
+    <path d="M21 6H8" />
+    <path d="M21 18h-8" />
+    <path d="M3 6v4c0 1.1.9 2 2 2h3" />
+    <path d="M3 10v6c0 1.1.9 2 2 2h3" />
+  </svg>
+);
+
+// Callout icon for slash menu (Lucide message-square-text)
+const CalloutIcon = () => (
+  <svg
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    <path d="M13 8H7" />
+    <path d="M17 12H7" />
+  </svg>
+);
+
+// Equation icon for slash menu (sigma symbol)
+const EquationIcon = () => (
+  <svg
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M18 7V4H6l6 8-6 8h12v-3" />
+  </svg>
+);
+
+/**
+ * Build custom slash menu items with the default items plus TOC, Callout, and Equation.
+ */
+function getCustomSlashMenuItems(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  editor: any,
+) {
+  return [
+    ...getDefaultReactSlashMenuItems(editor),
+    {
+      title: "Callout",
+      onItemClick: () => {
+        insertOrUpdateBlockForSlashMenu(editor, {
+          type: "callout" as never,
+          props: { type: "info" },
+        });
+      },
+      aliases: ["callout", "alert", "admonition", "note", "warning", "tip"],
+      group: "Basic blocks",
+      icon: <CalloutIcon />,
+      subtext: "Colored callout box for notes, tips, and warnings",
+    },
+    {
+      title: "Equation",
+      onItemClick: () => {
+        insertOrUpdateBlockForSlashMenu(editor, {
+          type: "equation" as never,
+          props: { equation: "" },
+        });
+      },
+      aliases: ["equation", "math", "latex", "formula", "katex"],
+      group: "Advanced",
+      icon: <EquationIcon />,
+      subtext: "Display math equation with LaTeX",
+    },
+    {
+      title: "Table of Contents",
+      onItemClick: () => {
+        insertOrUpdateBlockForSlashMenu(editor, { type: "toc" as never });
+      },
+      aliases: ["toc", "table of contents", "contents"],
+      group: "Other",
+      icon: <TocIcon />,
+      subtext: "Auto-generated table of contents from headings",
+    },
+  ];
 }
 
 interface EditorProps {
@@ -127,8 +241,8 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
     async (noteId: string, content: string) => {
       setIsSaving(true);
       try {
-        // Restore SVG code blocks from data-URI images
-        const body = postprocessSvg(content);
+        // Restore SVG code blocks and callout blocks to markdown syntax
+        const body = postprocessCallouts(postprocessSvg(content));
         // Recombine frontmatter with body if this is a story file
         const fm = storyFrontmatterRef.current;
         const fullContent = fm ? recombine(fm, body) : body;
@@ -185,7 +299,7 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
     scheduleSave();
   }, [scheduleSave]);
 
-  // Extract body from content, stripping frontmatter and preprocessing SVG
+  // Extract body from content, stripping frontmatter and preprocessing SVG/callouts
   const extractBody = useCallback((content: string): string => {
     let body: string;
     const parsed = parseFrontmatter(content);
@@ -198,7 +312,7 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
       setStoryFrontmatter(null);
       body = content;
     }
-    return preprocessSvg(body);
+    return preprocessSvg(preprocessCallouts(body));
   }, []);
 
   // Load note content when the current note changes
@@ -287,7 +401,7 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
         needsSaveRef.current = false;
         try {
           let markdown = editor.blocksToMarkdownLossy(editor.document);
-          markdown = postprocessSvg(markdown);
+          markdown = postprocessCallouts(postprocessSvg(markdown));
           const fm = storyFrontmatterRef.current;
           saveNote(fm ? recombine(fm, markdown) : markdown);
         } catch {
@@ -622,12 +736,27 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
             editor={editor}
             theme={resolvedTheme}
             onChange={handleEditorChange}
+            slashMenu={false}
           >
+            <SuggestionMenuController
+              triggerCharacter="/"
+              getItems={async (query) =>
+                filterSuggestionItems(
+                  getCustomSlashMenuItems(editor),
+                  query,
+                )
+              }
+            />
             <SuggestionMenuController
               triggerCharacter="[["
               getItems={getWikilinkItems}
             />
           </BlockNoteView>
+          <BacklinksPanel
+            noteTitle={currentNote.title}
+            noteId={currentNote.id}
+            onNavigate={(noteId) => selectNote(noteId)}
+          />
         </div>
       </div>
     </div>

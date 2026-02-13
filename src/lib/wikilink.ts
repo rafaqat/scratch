@@ -19,9 +19,15 @@ const WIKILINK_RE = /\[\[([^\]]+)\]\]/g;
 /**
  * Walk a BlockNote block tree and convert [[Title]] text patterns
  * in inline content arrays into wikilink inline content nodes.
+ * Also converts `[toc]` paragraphs into TOC block nodes.
  */
 export function injectWikilinks(blocks: AnyBlock[]): AnyBlock[] {
   return blocks.map((block) => {
+    // Convert [toc] paragraph blocks into TOC blocks
+    if (block.type === "paragraph" && isTocParagraph(block)) {
+      return { type: "toc", props: {}, children: [] };
+    }
+
     const result = { ...block };
 
     // Process inline content if present
@@ -49,6 +55,17 @@ export function injectWikilinks(blocks: AnyBlock[]): AnyBlock[] {
 
     return result;
   });
+}
+
+/**
+ * Check if a paragraph block contains exactly `[toc]` as its text content.
+ */
+function isTocParagraph(block: AnyBlock): boolean {
+  if (!Array.isArray(block.content)) return false;
+  if (block.content.length !== 1) return false;
+  const node = block.content[0];
+  if (node.type !== "text" || typeof node.text !== "string") return false;
+  return node.text.trim() === "[toc]";
 }
 
 function processInlineContent(content: AnyInlineContent[]): AnyInlineContent[] {

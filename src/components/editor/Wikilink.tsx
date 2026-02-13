@@ -1,5 +1,5 @@
 import { createReactInlineContentSpec } from "@blocknote/react";
-import { BlockNoteSchema, defaultInlineContentSpecs } from "@blocknote/core";
+import type { BlockNoteEditor } from "@blocknote/core";
 import type { NoteMetadata } from "../../types/note";
 
 /**
@@ -69,27 +69,13 @@ export const Wikilink = createReactInlineContentSpec(
 );
 
 /**
- * Custom BlockNote schema with wikilink support.
- */
-export const schema = BlockNoteSchema.create({
-  inlineContentSpecs: {
-    ...defaultInlineContentSpecs,
-    wikilink: Wikilink,
-  },
-});
-
-/**
- * Type helper for the custom editor instance.
- */
-export type WikilinkEditor = typeof schema.BlockNoteEditor;
-
-/**
  * Build suggestion menu items from the notes list.
  * Filters by query (typed after [[) and returns items
  * that insert a wikilink node when clicked.
  */
 export function getWikilinkMenuItems(
-  editor: WikilinkEditor,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  editor: BlockNoteEditor<any, any, any>,
   notes: NoteMetadata[],
   query: string,
 ) {
