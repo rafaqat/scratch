@@ -5,13 +5,15 @@ import { getSettings, updateSettings as saveSettings } from "../../services/note
 import { Button } from "../ui";
 import { Input } from "../ui";
 import { CopyIcon, SpinnerIcon } from "../icons";
-import type { McpStatus, Settings } from "../../types/note";
+import type { McpStatus, Settings, WebhookLogEntry } from "../../types/note";
 
 export function McpSettingsSection() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [mcpStatus, setMcpStatus] = useState<McpStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [portInput, setPortInput] = useState("3921");
+  const [webhookLog, setWebhookLog] = useState<WebhookLogEntry[]>([]);
+  const [showWebhookLog, setShowWebhookLog] = useState(false);
 
   const loadSettings = useCallback(async () => {
     try {
@@ -32,10 +34,20 @@ export function McpSettingsSection() {
     }
   }, []);
 
+  const fetchWebhookLog = useCallback(async () => {
+    try {
+      const log = await invoke<WebhookLogEntry[]>("webhook_get_log");
+      setWebhookLog(log.reverse()); // Most recent first
+    } catch {
+      // Webhook log not available
+    }
+  }, []);
+
   useEffect(() => {
     loadSettings();
     fetchStatus();
-  }, [loadSettings, fetchStatus]);
+    fetchWebhookLog();
+  }, [loadSettings, fetchStatus, fetchWebhookLog]);
 
   const handleToggle = async () => {
     if (!settings) return;
@@ -297,6 +309,85 @@ export function McpSettingsSection() {
             </p>
           </div>
         </div>
+      </section>
+
+      {/* Divider */}
+      <div className="border-t border-border border-dashed" />
+
+      {/* Webhook Activity Log */}
+      <section>
+        <div className="flex items-center justify-between mb-0.5">
+          <h2 className="text-xl font-medium">Webhook Activity</h2>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setShowWebhookLog(!showWebhookLog);
+              if (!showWebhookLog) fetchWebhookLog();
+            }}
+          >
+            {showWebhookLog ? "Hide" : "Show"} Log
+          </Button>
+        </div>
+        <p className="text-sm text-text-muted mb-4">
+          Recent webhook events received by the MCP server
+        </p>
+
+        {showWebhookLog && (
+          <div className="rounded-[10px] border border-border overflow-hidden">
+            {webhookLog.length === 0 ? (
+              <div className="p-4 text-sm text-text-muted text-center">
+                No webhook events recorded yet
+              </div>
+            ) : (
+              <div className="max-h-64 overflow-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-bg-secondary sticky top-0">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-medium text-text-muted">Time</th>
+                      <th className="text-left px-3 py-2 font-medium text-text-muted">Plugin</th>
+                      <th className="text-left px-3 py-2 font-medium text-text-muted">Event</th>
+                      <th className="text-left px-3 py-2 font-medium text-text-muted">Action</th>
+                      <th className="text-left px-3 py-2 font-medium text-text-muted">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {webhookLog.map((entry, i) => (
+                      <tr
+                        key={i}
+                        className="border-t border-border"
+                        title={entry.error ?? entry.note_id ?? ""}
+                      >
+                        <td className="px-3 py-1.5 text-text-muted whitespace-nowrap">
+                          {entry.timestamp.replace("T", " ").replace("Z", "")}
+                        </td>
+                        <td className="px-3 py-1.5 font-mono">{entry.plugin}</td>
+                        <td className="px-3 py-1.5 font-mono">{entry.event}</td>
+                        <td className="px-3 py-1.5">{entry.action}</td>
+                        <td className="px-3 py-1.5">
+                          <span
+                            className={`inline-flex items-center gap-1 ${
+                              entry.success
+                                ? "text-green-600 dark:text-green-400"
+                                : "text-red-600 dark:text-red-400"
+                            }`}
+                          >
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full ${
+                                entry.success ? "bg-green-500" : "bg-red-400"
+                              }`}
+                            />
+                            {entry.success ? "OK" : "Error"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </section>
     </div>
   );

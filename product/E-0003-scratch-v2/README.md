@@ -55,7 +55,7 @@ BlockNote supports custom blocks. Add the most-requested Notion block types.
 | [S-0003-07](stories/S-0003-07.md) | Callout block | 3 | In Progress | — |
 | [S-0003-08](stories/S-0003-08.md) | Equation block | 3 | In Progress | — |
 | [S-0003-09](stories/S-0003-09.md) | Bookmark block | 3 | Backlog | — |
-| [S-0003-10](stories/S-0003-10.md) | Table of contents block | 2 | In Progress | — |
+| [S-0003-10](stories/S-0003-10.md) | Table of contents block | 2 | Done | — |
 
 ## 4. Templates
 
@@ -72,7 +72,7 @@ Let AI agents build integrations. The MCP server already exposes 24 tools — th
 
 | Story | Title | Points | Status | Depends On |
 |-------|-------|--------|--------|------------|
-| [S-0003-13](stories/S-0003-13.md) | Webhook receiver | 3 | In Progress | — |
+| [S-0003-13](stories/S-0003-13.md) | Webhook receiver | 3 | Done | — |
 | [S-0003-14](stories/S-0003-14.md) | Plugin manifest system | 5 | Backlog | — |
 | [S-0003-15](stories/S-0003-15.md) | Built-in reference plugins | 2 | Backlog | [14](stories/S-0003-14.md) |
 
@@ -104,3 +104,4 @@ Let AI agents build integrations. The MCP server already exposes 24 tools — th
 | 2026-02-13 | v1.0.0 | Started | S-0003-11 Template system | — |
 | 2026-02-13 | v1.0.0 | Started | S-0003-07 Callout block | — |
 | 2026-02-13 | v1.0.0 | Started | S-0003-08 Equation block | — |
+| 2026-02-13 | v1.0.0 | Completed | S-0003-10 Table of contents block | `8228c0f` |

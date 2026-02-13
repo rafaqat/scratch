@@ -14,9 +14,11 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tokio::fs;
 
+pub mod database;
 mod git;
 mod mcp;
 pub mod stories;
+pub mod webhooks;
 
 // Note metadata for list display
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -290,6 +292,173 @@ impl SearchIndex {
     }
 }
 
+// Backlink entry: a note that links to the current note
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BacklinkEntry {
+    pub note_id: String,
+    pub note_title: String,
+    pub context: String,
+}
+
+// Backlinks index: maps lowercase note title -> list of notes that link to it
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BacklinksIndex {
+    // Key: lowercase note title, Value: list of backlink entries
+    pub links: HashMap<String, Vec<BacklinkEntry>>,
+}
+
+/// Regex to match [[Title]] or [[Title|alias]] wikilinks in markdown content.
+fn find_wikilinks_in_content(content: &str) -> Vec<(String, String)> {
+    let re = regex::Regex::new(r"\[\[([^\]]+)\]\]").unwrap();
+    let mut results = Vec::new();
+
+    for cap in re.captures_iter(content) {
+        let inner = cap[1].trim().to_string();
+        if inner.is_empty() {
+            continue;
+        }
+        // Support alias syntax: [[Title|display text]]
+        let title = if let Some(pos) = inner.find('|') {
+            inner[..pos].trim().to_string()
+        } else {
+            inner.clone()
+        };
+        if !title.is_empty() {
+            // Extract context: get the line containing this wikilink
+            let match_start = cap.get(0).unwrap().start();
+            let context = extract_wikilink_context(content, match_start);
+            results.push((title, context));
+        }
+    }
+
+    results
+}
+
+/// Extract a context snippet around a wikilink match position.
+fn extract_wikilink_context(content: &str, match_pos: usize) -> String {
+    // Find the line containing the match
+    let line_start = content[..match_pos].rfind('\n').map(|p| p + 1).unwrap_or(0);
+    let line_end = content[match_pos..].find('\n')
+        .map(|p| match_pos + p)
+        .unwrap_or(content.len());
+
+    let line = &content[line_start..line_end];
+
+    // Strip markdown formatting for cleaner display
+    let stripped = strip_markdown(line.trim());
+
+    // Truncate to reasonable length
+    if stripped.len() > 120 {
+        format!("{}...", &stripped[..120])
+    } else {
+        stripped
+    }
+}
+
+/// Get the path for the backlinks index file.
+fn get_backlinks_index_path(notes_folder: &str) -> PathBuf {
+    let scratch_dir = PathBuf::from(notes_folder).join(".scratch");
+    std::fs::create_dir_all(&scratch_dir).ok();
+    scratch_dir.join("backlinks.json")
+}
+
+/// Load backlinks index from disk.
+fn load_backlinks_index(notes_folder: &str) -> BacklinksIndex {
+    let path = get_backlinks_index_path(notes_folder);
+    if path.exists() {
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|content| serde_json::from_str(&content).ok())
+            .unwrap_or_default()
+    } else {
+        BacklinksIndex::default()
+    }
+}
+
+/// Save backlinks index to disk.
+fn save_backlinks_index(notes_folder: &str, index: &BacklinksIndex) -> Result<()> {
+    let path = get_backlinks_index_path(notes_folder);
+    let content = serde_json::to_string_pretty(index)?;
+    std::fs::write(path, content)?;
+    Ok(())
+}
+
+/// Rebuild the entire backlinks index by scanning all notes.
+fn rebuild_backlinks_index_from_folder(notes_folder: &str) -> BacklinksIndex {
+    let folder_path = PathBuf::from(notes_folder);
+    let mut index = BacklinksIndex::default();
+
+    if !folder_path.exists() {
+        return index;
+    }
+
+    let files = match walk_md_files_sync(&folder_path, &folder_path) {
+        Ok(f) => f,
+        Err(_) => return index,
+    };
+
+    for file_path in &files {
+        if let Ok(content) = std::fs::read_to_string(file_path) {
+            let note_id = path_to_note_id(&folder_path, file_path)
+                .unwrap_or_else(|| "unknown".to_string());
+            let note_title = extract_title(&content);
+
+            let wikilinks = find_wikilinks_in_content(&content);
+            for (target_title, context) in wikilinks {
+                let key = target_title.to_lowercase();
+                let entry = BacklinkEntry {
+                    note_id: note_id.clone(),
+                    note_title: note_title.clone(),
+                    context,
+                };
+                index.links.entry(key).or_default().push(entry);
+            }
+        }
+    }
+
+    // Save to disk
+    let _ = save_backlinks_index(notes_folder, &index);
+
+    index
+}
+
+/// Update backlinks index incrementally when a note is saved.
+/// Removes all old entries from this note, then adds new ones.
+fn update_backlinks_for_note(
+    index: &mut BacklinksIndex,
+    note_id: &str,
+    note_title: &str,
+    content: &str,
+) {
+    // Remove all existing entries from this note
+    for entries in index.links.values_mut() {
+        entries.retain(|e| e.note_id != note_id);
+    }
+    // Clean up empty keys
+    index.links.retain(|_, v| !v.is_empty());
+
+    // Add new entries
+    let wikilinks = find_wikilinks_in_content(content);
+    for (target_title, context) in wikilinks {
+        let key = target_title.to_lowercase();
+        let entry = BacklinkEntry {
+            note_id: note_id.to_string(),
+            note_title: note_title.to_string(),
+            context,
+        };
+        index.links.entry(key).or_default().push(entry);
+    }
+}
+
+/// Remove all backlink entries from a deleted note.
+fn remove_backlinks_for_note(index: &mut BacklinksIndex, note_id: &str) {
+    for entries in index.links.values_mut() {
+        entries.retain(|e| e.note_id != note_id);
+    }
+    index.links.retain(|_, v| !v.is_empty());
+}
+
 // Inner state shared between Tauri and MCP server via Arc
 pub struct AppStateInner {
     pub app_config: RwLock<AppConfig>,  // notes_folder path (stored in app data)
@@ -297,6 +466,7 @@ pub struct AppStateInner {
     pub notes_cache: RwLock<HashMap<String, NoteMetadata>>,
     pub file_watcher: Mutex<Option<FileWatcherState>>,
     pub search_index: Mutex<Option<SearchIndex>>,
+    pub backlinks_index: RwLock<BacklinksIndex>,
     pub debounce_map: Arc<Mutex<HashMap<PathBuf, Instant>>>,
     pub mcp_server_handle: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     pub story_index: Mutex<Option<stories::StoryIndex>>,
@@ -321,6 +491,7 @@ impl Default for AppState {
             notes_cache: RwLock::new(HashMap::new()),
             file_watcher: Mutex::new(None),
             search_index: Mutex::new(None),
+            backlinks_index: RwLock::new(BacklinksIndex::default()),
             debounce_map: Arc::new(Mutex::new(HashMap::new())),
             mcp_server_handle: Mutex::new(None),
             story_index: Mutex::new(None),
@@ -777,6 +948,13 @@ fn set_notes_folder(app: AppHandle, path: String, state: State<AppState>) -> Res
         }
     }
 
+    // Rebuild backlinks index
+    {
+        let new_index = rebuild_backlinks_index_from_folder(&path);
+        let mut bl_index = state.backlinks_index.write().expect("backlinks write lock");
+        *bl_index = new_index;
+    }
+
     Ok(())
 }
 
@@ -1070,6 +1248,23 @@ pub async fn save_note_impl(
         }
     }
 
+    // Update backlinks index incrementally
+    {
+        let mut bl_index = state.backlinks_index.write().expect("backlinks write lock");
+        // If renamed, remove old entries first
+        if let Some((ref old_id_str, _)) = old_id {
+            remove_backlinks_for_note(&mut bl_index, old_id_str);
+        }
+        update_backlinks_for_note(&mut bl_index, &final_id, &title, &content);
+
+        // Save to disk
+        let folder = state.app_config.read().expect("app_config read lock")
+            .notes_folder.clone();
+        if let Some(ref folder) = folder {
+            let _ = save_backlinks_index(folder, &bl_index);
+        }
+    }
+
     // Update cache (remove old entry if renamed)
     if let Some((ref old_id_str, _)) = old_id {
         let mut cache = state.notes_cache.write().expect("cache write lock");
@@ -1122,6 +1317,13 @@ pub async fn delete_note_impl(id: String, state: &AppState) -> Result<(), String
     {
         let mut cache = state.notes_cache.write().expect("cache write lock");
         cache.remove(&id);
+    }
+
+    // Remove backlinks from deleted note
+    {
+        let mut bl_index = state.backlinks_index.write().expect("backlinks write lock");
+        remove_backlinks_for_note(&mut bl_index, &id);
+        let _ = save_backlinks_index(&folder, &bl_index);
     }
 
     Ok(())
@@ -1201,6 +1403,285 @@ pub async fn create_note_impl(
 async fn create_note(state: State<'_, AppState>) -> Result<Note, String> {
     create_note_impl(None, &state).await
 }
+
+// ── Template system ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateInfo {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub is_builtin: bool,
+}
+
+const BUILTIN_TEMPLATES: &[(&str, &str)] = &[
+    ("daily-journal", "# Daily Journal\n\n## {{date:MMMM D, YYYY}}\n\n### Gratitude\n\n- \n\n### Today's Goals\n\n- [ ] \n\n### Notes\n\n{{cursor}}\n\n### Reflection\n\n"),
+    ("meeting-notes", "# Meeting Notes\n\n**Date:** {{date:YYYY-MM-DD}}  \n**Time:** {{time}}  \n**Attendees:**\n\n- \n\n## Agenda\n\n1. \n\n## Discussion\n\n{{cursor}}\n\n## Action Items\n\n- [ ] \n\n## Next Steps\n\n"),
+    ("project-brief", "# {{title}}\n\n## Overview\n\n{{cursor}}\n\n## Goals\n\n- \n\n## Scope\n\n### In Scope\n\n- \n\n### Out of Scope\n\n- \n\n## Timeline\n\n| Phase | Start | End | Status |\n|-------|-------|-----|--------|\n| Planning | {{date:YYYY-MM-DD}} | | Not Started |\n\n## Resources\n\n- \n\n## Risks\n\n| Risk | Impact | Mitigation |\n|------|--------|------------|\n| | | |\n"),
+];
+
+fn ensure_templates_dir(notes_folder: &str) -> Result<PathBuf, String> {
+    let templates_dir = PathBuf::from(notes_folder).join(".scratch").join("templates");
+    std::fs::create_dir_all(&templates_dir).map_err(|e| e.to_string())?;
+    for (name, content) in BUILTIN_TEMPLATES {
+        let path = templates_dir.join(format!("{}.md", name));
+        if !path.exists() {
+            std::fs::write(&path, content).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(templates_dir)
+}
+
+fn extract_template_name(filename: &str, content: &str) -> String {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(title) = trimmed.strip_prefix("# ") {
+            let title = title.trim();
+            if title.starts_with("{{") && title.ends_with("}}") {
+                break;
+            }
+            if !title.is_empty() {
+                return title.to_string();
+            }
+        }
+    }
+    filename.replace('-', " ").split_whitespace()
+        .map(|w| {
+            let mut chars = w.chars();
+            match chars.next() {
+                Some(c) => format!("{}{}", c.to_uppercase(), chars.as_str()),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn extract_template_description(content: &str) -> String {
+    let mut past_title = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if !past_title {
+            if trimmed.starts_with("# ") {
+                past_title = true;
+                continue;
+            }
+            if !trimmed.is_empty() {
+                past_title = true;
+                let stripped = strip_template_vars(trimmed);
+                if !stripped.is_empty() {
+                    return stripped.chars().take(100).collect();
+                }
+            }
+        } else if !trimmed.is_empty() {
+            let stripped = strip_template_vars(trimmed);
+            if !stripped.is_empty() {
+                return stripped.chars().take(100).collect();
+            }
+        }
+    }
+    String::new()
+}
+
+fn strip_template_vars(text: &str) -> String {
+    let re = regex::Regex::new(r"\{\{[^}]+\}\}").unwrap();
+    let result = re.replace_all(text, "").to_string();
+    result.trim_start_matches('#').trim_start_matches("**").trim_end_matches("**")
+        .trim_start_matches("- ").trim().to_string()
+}
+
+fn substitute_template_variables(content: &str, title: &str) -> (String, Option<usize>) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs() as i64;
+    let (year, month, day, hour, minute) = unix_to_datetime(secs);
+    let month_names = ["January", "February", "March", "April", "May", "June",
+                       "July", "August", "September", "October", "November", "December"];
+    let month_short = &month_names[month as usize - 1][..3];
+    let month_full = month_names[month as usize - 1];
+    let mut result = content.to_string();
+    let date_format_re = regex::Regex::new(r"\{\{date:([^}]+)\}\}").unwrap();
+    result = date_format_re.replace_all(&result, |caps: &regex::Captures| {
+        format_date_pattern(&caps[1], year, month, day, month_full, month_short)
+    }).to_string();
+    result = result.replace("{{date}}", &format!("{:04}-{:02}-{:02}", year, month, day));
+    result = result.replace("{{time}}", &format!("{:02}:{:02}", hour, minute));
+    result = result.replace("{{title}}", title);
+    let cursor_pos = result.find("{{cursor}}");
+    result = result.replace("{{cursor}}", "");
+    let cursor_line = cursor_pos.map(|pos| {
+        result[..pos].lines().count().saturating_sub(1)
+    });
+    (result, cursor_line)
+}
+
+fn unix_to_datetime(secs: i64) -> (i32, u32, u32, u32, u32) {
+    let days = (secs / 86400) as i32;
+    let time_of_day = (secs % 86400) as u32;
+    let hour = time_of_day / 3600;
+    let minute = (time_of_day % 3600) / 60;
+    let mut y = 1970;
+    let mut remaining = days;
+    loop {
+        let days_in_year = if is_leap_year(y) { 366 } else { 365 };
+        if remaining < days_in_year { break; }
+        remaining -= days_in_year;
+        y += 1;
+    }
+    let leap = is_leap_year(y);
+    let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut m = 0;
+    while m < 12 && remaining >= month_days[m] {
+        remaining -= month_days[m];
+        m += 1;
+    }
+    (y, (m + 1) as u32, (remaining + 1) as u32, hour, minute)
+}
+
+fn is_leap_year(y: i32) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+fn format_date_pattern(pattern: &str, year: i32, month: u32, day: u32, month_full: &str, month_short: &str) -> String {
+    let mut result = pattern.to_string();
+    result = result.replace("YYYY", &format!("{:04}", year));
+    result = result.replace("YY", &format!("{:02}", year % 100));
+    result = result.replace("MMMM", month_full);
+    result = result.replace("MMM", month_short);
+    result = result.replace("MM", &format!("{:02}", month));
+    result = result.replace("DD", &format!("{:02}", day));
+    if result.contains('D') {
+        result = result.replace('D', &format!("{}", day));
+    }
+    result
+}
+
+pub async fn list_templates_impl(state: &AppState) -> Result<Vec<TemplateInfo>, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+    let templates_dir = ensure_templates_dir(&folder)?;
+    let builtin_names: HashSet<&str> = BUILTIN_TEMPLATES.iter().map(|(name, _)| *name).collect();
+    let mut templates = Vec::new();
+    let mut entries = fs::read_dir(&templates_dir).await.map_err(|e| e.to_string())?;
+    while let Some(entry) = entries.next_entry().await.map_err(|e| e.to_string())? {
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "md") {
+            let filename = path.file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let content = fs::read_to_string(&path).await.map_err(|e| e.to_string())?;
+            let name = extract_template_name(&filename, &content);
+            let description = extract_template_description(&content);
+            let is_builtin = builtin_names.contains(filename.as_str());
+            templates.push(TemplateInfo { id: filename, name, description, is_builtin });
+        }
+    }
+    templates.sort_by(|a, b| {
+        b.is_builtin.cmp(&a.is_builtin).then_with(|| a.name.cmp(&b.name))
+    });
+    Ok(templates)
+}
+
+#[tauri::command]
+async fn list_templates(state: State<'_, AppState>) -> Result<Vec<TemplateInfo>, String> {
+    list_templates_impl(&state).await
+}
+
+pub async fn read_template_impl(id: String, state: &AppState) -> Result<String, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+    let templates_dir = ensure_templates_dir(&folder)?;
+    if id.contains('/') || id.contains('\\') || id.contains("..") || id.contains('\0') {
+        return Err("Invalid template ID".to_string());
+    }
+    let path = templates_dir.join(format!("{}.md", id));
+    if !path.exists() {
+        return Err(format!("Template not found: {}", id));
+    }
+    fs::read_to_string(&path).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn read_template(id: String, state: State<'_, AppState>) -> Result<String, String> {
+    read_template_impl(id, &state).await
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateNoteResult {
+    pub note: Note,
+    pub cursor_line: Option<usize>,
+}
+
+pub async fn create_note_from_template_impl(
+    template_id: String,
+    title: Option<String>,
+    state: &AppState,
+) -> Result<TemplateNoteResult, String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+    let templates_dir = ensure_templates_dir(&folder)?;
+    if template_id.contains('/') || template_id.contains('\\') || template_id.contains("..") || template_id.contains('\0') {
+        return Err("Invalid template ID".to_string());
+    }
+    let template_path = templates_dir.join(format!("{}.md", template_id));
+    if !template_path.exists() {
+        return Err(format!("Template not found: {}", template_id));
+    }
+    let template_content = fs::read_to_string(&template_path).await.map_err(|e| e.to_string())?;
+    let note_title = title.unwrap_or_else(|| "Untitled".to_string());
+    let (content, cursor_line) = substitute_template_variables(&template_content, &note_title);
+    let actual_title = extract_title(&content);
+    let base_name = sanitize_filename(&actual_title);
+    let folder_path = PathBuf::from(&folder);
+    let mut file_name = base_name.clone();
+    let mut counter = 1;
+    while folder_path.join(format!("{}.md", file_name)).exists() {
+        file_name = format!("{}-{}", base_name, counter);
+        counter += 1;
+    }
+    let file_path = folder_path.join(format!("{}.md", &file_name));
+    fs::write(&file_path, &content).await.map_err(|e| e.to_string())?;
+    let modified = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    {
+        let index = state.search_index.lock().expect("search index mutex");
+        if let Some(ref search_index) = *index {
+            let _ = search_index.index_note(&file_name, &actual_title, &content, modified);
+        }
+    }
+    Ok(TemplateNoteResult {
+        note: Note {
+            id: file_name,
+            title: actual_title,
+            content,
+            path: file_path.to_string_lossy().into_owned(),
+            modified,
+        },
+        cursor_line,
+    })
+}
+
+#[tauri::command]
+async fn create_note_from_template(
+    template_id: String,
+    title: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<TemplateNoteResult, String> {
+    create_note_from_template_impl(template_id, title, &state).await
+}
+
+// ── End template system ──────────────────────────────────────────────────────
 
 // List folders under the notes root, optionally under a parent folder.
 pub async fn list_folders_impl(
@@ -2746,6 +3227,32 @@ fn rebuild_search_index(app: AppHandle, state: State<AppState>) -> Result<(), St
     Ok(())
 }
 
+// --- Backlinks ---
+
+#[tauri::command]
+fn get_backlinks(note_title: String, state: State<AppState>) -> Vec<BacklinkEntry> {
+    let bl_index = state.backlinks_index.read().expect("backlinks read lock");
+    let key = note_title.to_lowercase();
+    bl_index.links.get(&key).cloned().unwrap_or_default()
+}
+
+#[tauri::command]
+fn rebuild_backlinks(state: State<AppState>) -> Result<(), String> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config
+            .notes_folder
+            .clone()
+            .ok_or("Notes folder not set")?
+    };
+
+    let new_index = rebuild_backlinks_index_from_folder(&folder);
+    let mut bl_index = state.backlinks_index.write().expect("backlinks write lock");
+    *bl_index = new_index;
+
+    Ok(())
+}
+
 // UI helper commands - wrap Tauri plugins for consistent invoke-based API
 
 #[tauri::command]
@@ -3277,6 +3784,149 @@ async fn mcp_restart(state: State<'_, AppState>) -> Result<McpStatus, String> {
     })
 }
 
+#[tauri::command]
+fn webhook_get_log(state: State<AppState>) -> Vec<webhooks::WebhookLogEntry> {
+    let folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone()
+    };
+    match folder {
+        Some(f) => webhooks::get_webhook_log(&f),
+        None => Vec::new(),
+    }
+}
+
+// ---- Database Tauri Commands ----
+
+fn get_notes_folder_path(state: &AppState) -> Result<PathBuf, String> {
+    let app_config = state.app_config.read().expect("app_config read lock");
+    app_config
+        .notes_folder
+        .as_ref()
+        .map(|f| PathBuf::from(f))
+        .ok_or_else(|| "Notes folder not set".to_string())
+}
+
+#[tauri::command]
+fn db_list(state: State<AppState>) -> Result<Vec<database::DatabaseInfo>, String> {
+    let folder = get_notes_folder_path(&state)?;
+    database::scan_databases(&folder)
+}
+
+#[tauri::command]
+fn db_create(
+    name: String,
+    columns: Vec<database::ColumnDef>,
+    views: Option<Vec<database::ViewDef>>,
+    state: State<AppState>,
+) -> Result<database::DatabaseInfo, String> {
+    let folder = get_notes_folder_path(&state)?;
+    database::create_database(&folder, &name, columns, views)
+}
+
+#[derive(Serialize, Deserialize)]
+struct DatabaseGetResult {
+    schema: database::DatabaseSchema,
+    rows: Vec<database::DatabaseRow>,
+}
+
+#[tauri::command]
+fn db_get(db_id: String, state: State<AppState>) -> Result<DatabaseGetResult, String> {
+    let folder = get_notes_folder_path(&state)?;
+    let (schema, rows) = database::get_database(&folder, &db_id)?;
+    Ok(DatabaseGetResult { schema, rows })
+}
+
+#[tauri::command]
+fn db_get_schema(db_id: String, state: State<AppState>) -> Result<database::DatabaseSchema, String> {
+    let folder = get_notes_folder_path(&state)?;
+    let db_folder = folder.join(&db_id);
+    database::load_schema(&db_folder)
+}
+
+#[tauri::command]
+fn db_delete(db_id: String, state: State<AppState>) -> Result<(), String> {
+    let folder = get_notes_folder_path(&state)?;
+    database::delete_database(&folder, &db_id)
+}
+
+#[tauri::command]
+fn db_create_row(
+    db_id: String,
+    fields: std::collections::HashMap<String, serde_json::Value>,
+    body: Option<String>,
+    state: State<AppState>,
+) -> Result<database::DatabaseRow, String> {
+    let folder = get_notes_folder_path(&state)?;
+    database::create_row(&folder, &db_id, fields, body)
+}
+
+#[tauri::command]
+fn db_update_row(
+    db_id: String,
+    row_id: String,
+    fields: std::collections::HashMap<String, serde_json::Value>,
+    body: Option<String>,
+    state: State<AppState>,
+) -> Result<database::DatabaseRow, String> {
+    let folder = get_notes_folder_path(&state)?;
+    database::update_row(&folder, &db_id, &row_id, fields, body)
+}
+
+#[tauri::command]
+fn db_delete_row(db_id: String, row_id: String, state: State<AppState>) -> Result<(), String> {
+    let folder = get_notes_folder_path(&state)?;
+    database::delete_row(&folder, &db_id, &row_id)
+}
+
+#[tauri::command]
+fn db_add_column(
+    db_id: String,
+    column: database::ColumnDef,
+    state: State<AppState>,
+) -> Result<database::DatabaseSchema, String> {
+    let folder = get_notes_folder_path(&state)?;
+    database::add_column(&folder, &db_id, column)
+}
+
+#[tauri::command]
+fn db_remove_column(
+    db_id: String,
+    column_id: String,
+    state: State<AppState>,
+) -> Result<database::DatabaseSchema, String> {
+    let folder = get_notes_folder_path(&state)?;
+    database::remove_column(&folder, &db_id, &column_id)
+}
+
+#[tauri::command]
+fn db_rename_column(
+    db_id: String,
+    old_column_id: String,
+    new_column_id: String,
+    new_name: Option<String>,
+    state: State<AppState>,
+) -> Result<database::DatabaseSchema, String> {
+    let folder = get_notes_folder_path(&state)?;
+    database::rename_column(
+        &folder,
+        &db_id,
+        &old_column_id,
+        &new_column_id,
+        new_name.as_deref(),
+    )
+}
+
+#[tauri::command]
+fn db_update_schema(
+    db_id: String,
+    schema: database::DatabaseSchema,
+    state: State<AppState>,
+) -> Result<database::DatabaseSchema, String> {
+    let folder = get_notes_folder_path(&state)?;
+    database::update_schema(&folder, &db_id, schema)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -3311,6 +3961,13 @@ pub fn run() {
                 None
             };
 
+            // Build backlinks index on startup
+            let backlinks_index = if let Some(ref folder) = app_config.notes_folder {
+                rebuild_backlinks_index_from_folder(folder)
+            } else {
+                BacklinksIndex::default()
+            };
+
             let mcp_enabled = settings.mcp_enabled.unwrap_or(false);
             let mcp_port = settings.mcp_port.unwrap_or(3921);
 
@@ -3320,6 +3977,7 @@ pub fn run() {
                 notes_cache: RwLock::new(HashMap::new()),
                 file_watcher: Mutex::new(None),
                 search_index: Mutex::new(search_index),
+                backlinks_index: RwLock::new(backlinks_index),
                 debounce_map: Arc::new(Mutex::new(HashMap::new())),
                 mcp_server_handle: Mutex::new(None),
                 story_index: Mutex::new(None),
@@ -3366,6 +4024,24 @@ pub fn run() {
             ai_execute_claude,
             mcp_get_status,
             mcp_restart,
+            webhook_get_log,
+            get_backlinks,
+            rebuild_backlinks,
+            db_list,
+            db_create,
+            db_get,
+            db_get_schema,
+            db_delete,
+            db_create_row,
+            db_update_row,
+            db_delete_row,
+            db_add_column,
+            db_remove_column,
+            db_rename_column,
+            db_update_schema,
+            list_templates,
+            read_template,
+            create_note_from_template,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

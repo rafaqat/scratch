@@ -40,3 +40,13 @@ export interface McpStatus {
   running: boolean;
   port: number;
 }
+
+export interface WebhookLogEntry {
+  timestamp: string;
+  plugin: string;
+  event: string;
+  action: string;
+  success: boolean;
+  error?: string;
+  note_id?: string;
+}

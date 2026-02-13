@@ -539,6 +539,7 @@ pub fn start_mcp_server(state: AppState, port: u16) -> tauri::async_runtime::Joi
         let app = Router::new()
             .route("/mcp", post(handle_mcp))
             .route("/health", get(handle_health))
+            .route("/webhooks/{plugin_name}", post(crate::webhooks::handle_webhook))
             .layer(CorsLayer::permissive())
             .with_state(state);
 
