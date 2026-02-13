@@ -4,6 +4,7 @@ import type {
   DatabaseInfo,
   DatabaseRow,
   DatabaseSchema,
+  RowTemplateInfo,
   ViewDef,
 } from "../types/database";
 
@@ -113,4 +114,26 @@ export async function updateSchema(
   schema: DatabaseSchema
 ): Promise<DatabaseSchema> {
   return invoke("db_update_schema", { dbId, schema });
+}
+
+// ---- Row Templates ----
+
+/** List available row templates for a database */
+export async function listRowTemplates(
+  dbId: string
+): Promise<RowTemplateInfo[]> {
+  return invoke("db_list_templates", { dbId });
+}
+
+/** Create a new row from a named template with variable substitution */
+export async function createRowFromTemplate(
+  dbId: string,
+  templateName: string,
+  variables: Record<string, string> = {}
+): Promise<DatabaseRow> {
+  return invoke("db_create_row_from_template", {
+    dbId,
+    templateName,
+    variables,
+  });
 }

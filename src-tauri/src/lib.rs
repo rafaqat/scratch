@@ -3879,7 +3879,7 @@ async fn fetch_url_metadata(url: String) -> Result<UrlMetadata, String> {
     // Helper to get meta content by property or name
     let get_meta = |attr: &str, value: &str| -> Option<String> {
         let selector_str = format!("meta[{}=\"{}\"]", attr, value);
-        if let Ok(selector) = scraper::Selector::parse(&selector_str) {
+        let result = if let Ok(selector) = scraper::Selector::parse(&selector_str) {
             document
                 .select(&selector)
                 .next()
@@ -3887,7 +3887,8 @@ async fn fetch_url_metadata(url: String) -> Result<UrlMetadata, String> {
                 .map(|s| s.to_string())
         } else {
             None
-        }
+        };
+        result
     };
 
     // Extract title: og:title > twitter:title > <title>

@@ -107,12 +107,32 @@ pub struct ViewDef {
     pub sort_desc: Option<bool>,
 }
 
+/// A named row template stored in the database schema.
+/// Templates pre-fill fields and optionally include a markdown body.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RowTemplate {
+    /// Display name for the template (e.g., "Bug Report")
+    pub name: String,
+    /// Title pattern with optional variable substitution (e.g., "Bug: {{title}}")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Pre-filled field values (column_id -> value)
+    #[serde(default)]
+    pub fields: HashMap<String, JsonValue>,
+    /// Optional markdown body content
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseSchema {
     pub name: String,
     pub columns: Vec<ColumnDef>,
     #[serde(default)]
     pub views: Vec<ViewDef>,
+    /// Named row templates for quick row creation
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub templates: HashMap<String, RowTemplate>,
     /// Auto-incrementing counter for row filenames
     #[serde(default = "default_next_row_id")]
     pub next_row_id: u32,
@@ -465,6 +485,7 @@ pub fn create_database(
         name: name.to_string(),
         columns,
         views: default_views,
+        templates: HashMap::new(),
         next_row_id: 1,
     };
 
@@ -585,6 +606,123 @@ pub fn delete_row(notes_folder: &Path, db_id: &str, row_id: &str) -> Result<(), 
         .map_err(|e| format!("Failed to delete row: {}", e))?;
 
     Ok(())
+}
+
+/// Apply variable substitution to a string.
+/// Replaces `{{title}}`, `{{date}}`, and any custom variables.
+fn substitute_variables(template_str: &str, variables: &HashMap<String, String>) -> String {
+    let mut result = template_str.to_string();
+
+    // Built-in variables
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    result = result.replace("{{date}}", &today);
+
+    // User-provided variables (including {{title}})
+    for (key, value) in variables {
+        result = result.replace(&format!("{{{{{}}}}}", key), value);
+    }
+
+    // Remove any remaining unresolved variables
+    let re = regex::Regex::new(r"\{\{[^}]+\}\}").unwrap();
+    result = re.replace_all(&result, "").to_string();
+
+    result
+}
+
+/// Create a new row from a named template in the database schema.
+/// Variables are substituted into the template's title and body.
+pub fn create_row_from_template(
+    notes_folder: &Path,
+    db_id: &str,
+    template_name: &str,
+    variables: HashMap<String, String>,
+) -> Result<DatabaseRow, String> {
+    let db_folder = notes_folder.join(db_id);
+    if !is_database_folder(&db_folder) {
+        return Err(format!("'{}' is not a database folder", db_id));
+    }
+
+    let mut schema = load_schema(&db_folder)?;
+
+    // Look up the template
+    let template = schema.templates.get(template_name)
+        .ok_or_else(|| format!("Template '{}' not found in database '{}'", template_name, db_id))?
+        .clone();
+
+    // Build fields from template, applying variable substitution to string values
+    let mut fields = HashMap::new();
+
+    // Start with template fields
+    for (key, value) in &template.fields {
+        let substituted = match value {
+            JsonValue::String(s) => JsonValue::String(substitute_variables(s, &variables)),
+            other => other.clone(),
+        };
+        fields.insert(key.clone(), substituted);
+    }
+
+    // Apply title template if present — find the first text column to use as title field
+    if let Some(ref title_pattern) = template.title {
+        let title_value = substitute_variables(title_pattern, &variables);
+        // Find the title column (first text column, or column named "title")
+        let title_col_id = schema.columns.iter()
+            .find(|c| c.id == "title")
+            .or_else(|| schema.columns.iter().find(|c| c.col_type == ColumnType::Text))
+            .map(|c| c.id.clone());
+
+        if let Some(col_id) = title_col_id {
+            fields.insert(col_id, JsonValue::String(title_value));
+        }
+    }
+
+    // Fill in default values for any columns not set by the template
+    for col in &schema.columns {
+        if !fields.contains_key(&col.id) {
+            fields.insert(col.id.clone(), default_json_value(&col.col_type));
+        }
+    }
+
+    // Build body with variable substitution
+    let body = template.body
+        .as_ref()
+        .map(|b| substitute_variables(b, &variables))
+        .unwrap_or_default();
+
+    // Create the row file
+    let row_filename = next_row_filename(&mut schema);
+    save_schema(&db_folder, &schema)?;
+
+    let row = DatabaseRow {
+        id: row_filename.clone(),
+        fields,
+        body,
+        path: db_folder.join(format!("{}.md", row_filename)).to_string_lossy().to_string(),
+        modified: now_unix_secs(),
+    };
+
+    let content = serialize_row(&row, &schema)?;
+    std::fs::write(&row.path, &content)
+        .map_err(|e| format!("Failed to write row file: {}", e))?;
+
+    Ok(row)
+}
+
+/// List available template names for a database.
+pub fn list_row_templates(
+    notes_folder: &Path,
+    db_id: &str,
+) -> Result<Vec<(String, RowTemplate)>, String> {
+    let db_folder = notes_folder.join(db_id);
+    if !is_database_folder(&db_folder) {
+        return Err(format!("'{}' is not a database folder", db_id));
+    }
+
+    let schema = load_schema(&db_folder)?;
+    let mut templates: Vec<(String, RowTemplate)> = schema.templates
+        .into_iter()
+        .collect();
+    templates.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(templates)
 }
 
 /// Delete an entire database folder.
@@ -985,6 +1123,7 @@ next_row_id: 1
                 },
             ],
             views: vec![],
+            templates: HashMap::new(),
             next_row_id: 2,
         };
 
@@ -1024,6 +1163,7 @@ next_row_id: 1
                 },
             ],
             views: vec![],
+            templates: HashMap::new(),
             next_row_id: 1,
         };
 
@@ -1096,5 +1236,155 @@ next_row_id: 1
         let result = parse_schema(content);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("must have a target"));
+    }
+
+    #[test]
+    fn test_parse_schema_with_templates() {
+        let content = r#"---
+name: Bug Tracker
+columns:
+  - id: title
+    name: Title
+    type: text
+  - id: status
+    name: Status
+    type: select
+    options:
+      - Backlog
+      - In Progress
+      - Done
+  - id: tags
+    name: Tags
+    type: multi-select
+    options:
+      - bug
+      - feature
+views: []
+templates:
+  bug-report:
+    name: Bug Report
+    title: "Bug: {{title}}"
+    fields:
+      status: Backlog
+      tags:
+        - bug
+    body: |
+      ## Steps to Reproduce
+      1.
+      ## Expected
+      ## Actual
+next_row_id: 1
+---
+"#;
+        let schema = parse_schema(content).unwrap();
+        assert_eq!(schema.templates.len(), 1);
+        let tmpl = schema.templates.get("bug-report").unwrap();
+        assert_eq!(tmpl.name, "Bug Report");
+        assert_eq!(tmpl.title.as_deref(), Some("Bug: {{title}}"));
+        assert_eq!(tmpl.fields.get("status").unwrap(), &json!("Backlog"));
+        assert!(tmpl.body.is_some());
+        assert!(tmpl.body.as_ref().unwrap().contains("Steps to Reproduce"));
+    }
+
+    #[test]
+    fn test_substitute_variables() {
+        let mut vars = HashMap::new();
+        vars.insert("title".to_string(), "Login crash".to_string());
+
+        let result = substitute_variables("Bug: {{title}}", &vars);
+        assert_eq!(result, "Bug: Login crash");
+
+        // Test date substitution (should produce a YYYY-MM-DD format)
+        let result = substitute_variables("Created on {{date}}", &vars);
+        assert!(result.starts_with("Created on 20"));
+        assert!(!result.contains("{{date}}"));
+
+        // Test unresolved variables are removed
+        let result = substitute_variables("{{unknown}} text", &vars);
+        assert_eq!(result, " text");
+    }
+
+    #[test]
+    fn test_create_row_from_template() {
+        let dir = std::env::temp_dir().join(format!("scratch-test-tmpl-{}", std::process::id()));
+        let db_dir = dir.join("test-db");
+        std::fs::create_dir_all(&db_dir).unwrap();
+
+        let mut templates = HashMap::new();
+        templates.insert("bug-report".to_string(), RowTemplate {
+            name: "Bug Report".to_string(),
+            title: Some("Bug: {{title}}".to_string()),
+            fields: {
+                let mut f = HashMap::new();
+                f.insert("status".to_string(), json!("Backlog"));
+                f.insert("tags".to_string(), json!(["bug"]));
+                f
+            },
+            body: Some("## Steps to Reproduce\n1.\n## Expected\n## Actual\n".to_string()),
+        });
+
+        let schema = DatabaseSchema {
+            name: "Test DB".to_string(),
+            columns: vec![
+                ColumnDef { id: "title".to_string(), name: "Title".to_string(), col_type: ColumnType::Text, options: None, target: None },
+                ColumnDef { id: "status".to_string(), name: "Status".to_string(), col_type: ColumnType::Select, options: Some(vec!["Backlog".into(), "Done".into()]), target: None },
+                ColumnDef { id: "tags".to_string(), name: "Tags".to_string(), col_type: ColumnType::MultiSelect, options: Some(vec!["bug".into(), "feature".into()]), target: None },
+            ],
+            views: vec![],
+            templates,
+            next_row_id: 1,
+        };
+
+        save_schema(&db_dir, &schema).unwrap();
+
+        let mut vars = HashMap::new();
+        vars.insert("title".to_string(), "Login crash".to_string());
+
+        let row = create_row_from_template(&dir, "test-db", "bug-report", vars).unwrap();
+
+        assert_eq!(row.fields.get("title").unwrap(), &json!("Bug: Login crash"));
+        assert_eq!(row.fields.get("status").unwrap(), &json!("Backlog"));
+        assert_eq!(row.fields.get("tags").unwrap(), &json!(["bug"]));
+        assert!(row.body.contains("Steps to Reproduce"));
+
+        // Verify file was created
+        assert!(std::path::Path::new(&row.path).exists());
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_schema_roundtrip_with_templates() {
+        let mut templates = HashMap::new();
+        templates.insert("feature".to_string(), RowTemplate {
+            name: "Feature Request".to_string(),
+            title: Some("Feature: {{title}}".to_string()),
+            fields: {
+                let mut f = HashMap::new();
+                f.insert("status".to_string(), json!("Backlog"));
+                f
+            },
+            body: Some("## Description\n".to_string()),
+        });
+
+        let schema = DatabaseSchema {
+            name: "Test".to_string(),
+            columns: vec![
+                ColumnDef { id: "title".to_string(), name: "Title".to_string(), col_type: ColumnType::Text, options: None, target: None },
+                ColumnDef { id: "status".to_string(), name: "Status".to_string(), col_type: ColumnType::Select, options: Some(vec!["Backlog".into()]), target: None },
+            ],
+            views: vec![],
+            templates,
+            next_row_id: 1,
+        };
+
+        let serialized = serialize_schema(&schema).unwrap();
+        let parsed = parse_schema(&serialized).unwrap();
+
+        assert_eq!(parsed.templates.len(), 1);
+        let tmpl = parsed.templates.get("feature").unwrap();
+        assert_eq!(tmpl.name, "Feature Request");
+        assert_eq!(tmpl.title.as_deref(), Some("Feature: {{title}}"));
     }
 }

@@ -38,11 +38,39 @@ export interface ViewDef {
   sort_desc?: boolean;
 }
 
+// A named row template stored in the database schema
+export interface RowTemplate {
+  /** Template display name */
+  name: string;
+  /** Title pattern with {{variable}} placeholders */
+  title?: string;
+  /** Pre-filled field values (column_id -> value) */
+  fields: Record<string, unknown>;
+  /** Optional markdown body content */
+  body?: string;
+}
+
+// Row template info returned from the backend (includes the template key)
+export interface RowTemplateInfo {
+  /** Template key (e.g., "bug-report") */
+  id: string;
+  /** Template display name */
+  name: string;
+  /** Title pattern with {{variable}} placeholders */
+  title?: string;
+  /** Pre-filled field values */
+  fields: Record<string, unknown>;
+  /** Optional markdown body content */
+  body?: string;
+}
+
 // Full database schema (parsed from _schema.md frontmatter)
 export interface DatabaseSchema {
   name: string;
   columns: ColumnDef[];
   views: ViewDef[];
+  /** Named row templates for quick row creation */
+  templates?: Record<string, RowTemplate>;
   next_row_id: number;
 }
 
