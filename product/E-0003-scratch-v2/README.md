@@ -44,7 +44,7 @@ Allow notes to reference and nest other notes. Full wikilink support with backli
 | Story | Title | Points | Status | Depends On |
 |-------|-------|--------|--------|------------|
 | [S-0003-05](stories/S-0003-05.md) | Wikilink parser & inline block | 5 | Done | — |
-| [S-0003-06](stories/S-0003-06.md) | Backlinks panel | 3 | In Progress | [05](stories/S-0003-05.md) |
+| [S-0003-06](stories/S-0003-06.md) | Backlinks panel | 3 | Done | [05](stories/S-0003-05.md) |
 
 ## 3. Richer Blocks
 
@@ -52,7 +52,7 @@ BlockNote supports custom blocks. Add the most-requested Notion block types.
 
 | Story | Title | Points | Status | Depends On |
 |-------|-------|--------|--------|------------|
-| [S-0003-07](stories/S-0003-07.md) | Callout block | 3 | In Progress | — |
+| [S-0003-07](stories/S-0003-07.md) | Callout block | 3 | Done | — |
 | [S-0003-08](stories/S-0003-08.md) | Equation block | 3 | In Progress | — |
 | [S-0003-09](stories/S-0003-09.md) | Bookmark block | 3 | Backlog | — |
 | [S-0003-10](stories/S-0003-10.md) | Table of contents block | 2 | Done | — |
@@ -108,3 +108,5 @@ Let AI agents build integrations. The MCP server already exposes 24 tools — th
 | 2026-02-13 | v1.0.0 | Completed | S-0003-13 Webhook receiver | `a556d40` |
 | 2026-02-13 | v1.0.0 | Completed | S-0003-01 Database schema & file format | `a556d40` |
 | 2026-02-13 | v1.0.0 | Started | S-0003-14 Plugin manifest system | — |
+| 2026-02-13 | v1.0.0 | Completed | S-0003-07 Callout block | `118491f` |
+| 2026-02-13 | v1.0.0 | Completed | S-0003-06 Backlinks panel | `24a0e9a` |
