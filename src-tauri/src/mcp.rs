@@ -605,7 +605,7 @@ async fn handle_mcp(
             // Client acknowledgement, no response needed but we return success
             JsonRpcResponse::success(id, json!({}))
         }
-        "tools/list" => handle_tools_list(id),
+        "tools/list" => handle_tools_list(id, &state),
         "tools/call" => Box::pin(handle_tools_call(id, request.params, &state)).await,
         "resources/list" => handle_resources_list(id),
         "resources/read" => handle_resources_read(id, request.params),
@@ -636,9 +636,22 @@ fn handle_initialize(id: Value) -> JsonRpcResponse {
     )
 }
 
-// MCP tools/list
-fn handle_tools_list(id: Value) -> JsonRpcResponse {
-    JsonRpcResponse::success(id, json!({ "tools": get_tools() }))
+// MCP tools/list — includes built-in tools + plugin-defined tools
+fn handle_tools_list(id: Value, state: &AppState) -> JsonRpcResponse {
+    let mut all_tools: Vec<Value> = serde_json::from_value(get_tools()).unwrap_or_default();
+
+    // Load plugin-defined tools
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone()
+    };
+    if let Some(folder) = notes_folder {
+        let plugins = crate::plugins::load_enabled_plugins(&folder);
+        let plugin_tools = crate::plugins::generate_plugin_tools(&plugins);
+        all_tools.extend(plugin_tools);
+    }
+
+    JsonRpcResponse::success(id, json!({ "tools": all_tools }))
 }
 
 // MCP resources/list
@@ -700,7 +713,13 @@ async fn handle_tools_call(
         "stories_move" => tool_stories_move(state, &arguments).await,
         "stories_search" => tool_stories_search(state, &arguments).await,
         "stories_validate" => tool_stories_validate(state, &arguments).await,
-        _ => Err(format!("Unknown tool: {}", tool_name)),
+        // Plugin-defined tools (prefixed with "plugin_")
+        _ => {
+            match crate::plugins::try_dispatch_plugin_tool(tool_name, &arguments, state).await {
+                Some(result) => result,
+                None => Err(format!("Unknown tool: {}", tool_name)),
+            }
+        }
     };
 
     match result {

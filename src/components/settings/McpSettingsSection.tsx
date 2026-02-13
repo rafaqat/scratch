@@ -5,7 +5,7 @@ import { getSettings, updateSettings as saveSettings } from "../../services/note
 import { Button } from "../ui";
 import { Input } from "../ui";
 import { CopyIcon, SpinnerIcon } from "../icons";
-import type { McpStatus, Settings, WebhookLogEntry } from "../../types/note";
+import type { McpStatus, Settings, WebhookLogEntry, PluginInfo } from "../../types/note";
 
 export function McpSettingsSection() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -14,6 +14,8 @@ export function McpSettingsSection() {
   const [portInput, setPortInput] = useState("3921");
   const [webhookLog, setWebhookLog] = useState<WebhookLogEntry[]>([]);
   const [showWebhookLog, setShowWebhookLog] = useState(false);
+  const [plugins, setPlugins] = useState<PluginInfo[]>([]);
+  const [togglingPlugin, setTogglingPlugin] = useState<string | null>(null);
 
   const loadSettings = useCallback(async () => {
     try {
@@ -34,6 +36,15 @@ export function McpSettingsSection() {
     }
   }, []);
 
+  const fetchPlugins = useCallback(async () => {
+    try {
+      const list = await invoke<PluginInfo[]>("plugins_list");
+      setPlugins(list);
+    } catch {
+      // Plugins not available
+    }
+  }, []);
+
   const fetchWebhookLog = useCallback(async () => {
     try {
       const log = await invoke<WebhookLogEntry[]>("webhook_get_log");
@@ -46,8 +57,25 @@ export function McpSettingsSection() {
   useEffect(() => {
     loadSettings();
     fetchStatus();
+    fetchPlugins();
     fetchWebhookLog();
-  }, [loadSettings, fetchStatus, fetchWebhookLog]);
+  }, [loadSettings, fetchStatus, fetchPlugins, fetchWebhookLog]);
+
+  const handlePluginToggle = async (pluginName: string, currentEnabled: boolean) => {
+    setTogglingPlugin(pluginName);
+    try {
+      await invoke("plugins_toggle", { name: pluginName, enabled: !currentEnabled });
+      await fetchPlugins();
+      toast.success(
+        `Plugin "${pluginName}" ${!currentEnabled ? "enabled" : "disabled"}`
+      );
+    } catch (err) {
+      console.error("Failed to toggle plugin:", err);
+      toast.error("Failed to toggle plugin");
+    } finally {
+      setTogglingPlugin(null);
+    }
+  };
 
   const handleToggle = async () => {
     if (!settings) return;
@@ -309,6 +337,96 @@ export function McpSettingsSection() {
             </p>
           </div>
         </div>
+      </section>
+
+      {/* Divider */}
+      <div className="border-t border-border border-dashed" />
+
+      {/* Plugins */}
+      <section>
+        <h2 className="text-xl font-medium mb-0.5">Plugins</h2>
+        <p className="text-sm text-text-muted mb-4">
+          MCP plugins extend Scratch with custom tools and webhook handlers.
+          Place YAML manifests in <code className="text-xs bg-bg-secondary rounded px-1 py-0.5">.scratch/plugins/</code>
+        </p>
+
+        {plugins.length === 0 ? (
+          <div className="rounded-[10px] border border-border p-4 text-sm text-text-muted text-center">
+            No plugins installed. Create a YAML manifest in your notes folder under .scratch/plugins/
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {plugins.map((plugin) => (
+              <div
+                key={plugin.name}
+                className="rounded-[10px] border border-border p-4 space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">{plugin.name}</span>
+                      <span className="text-xs text-text-muted">v{plugin.version}</span>
+                      {!plugin.validation.valid && (
+                        <span className="text-xs text-red-500 font-medium">Invalid</span>
+                      )}
+                    </div>
+                    {plugin.description && (
+                      <p className="text-xs text-text-muted mt-0.5">{plugin.description}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => handlePluginToggle(plugin.name, plugin.enabled)}
+                    disabled={togglingPlugin === plugin.name}
+                    className={`relative w-10 h-[22px] rounded-full transition-colors cursor-pointer ${
+                      plugin.enabled ? "bg-accent" : "bg-bg-muted"
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-[3px] w-4 h-4 rounded-full bg-white transition-transform shadow-sm ${
+                        plugin.enabled
+                          ? "translate-x-[21px]"
+                          : "translate-x-[3px]"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/* Plugin details */}
+                <div className="flex items-center gap-4 text-xs text-text-muted">
+                  {plugin.tool_count > 0 && (
+                    <span>{plugin.tool_count} tool{plugin.tool_count !== 1 ? "s" : ""}</span>
+                  )}
+                  {plugin.webhook_count > 0 && (
+                    <span>{plugin.webhook_count} webhook{plugin.webhook_count !== 1 ? "s" : ""}</span>
+                  )}
+                  {plugin.permissions.length > 0 && (
+                    <span className="font-mono">
+                      {plugin.permissions.join(", ")}
+                    </span>
+                  )}
+                </div>
+
+                {/* Validation warnings */}
+                {plugin.validation.warnings.length > 0 && (
+                  <div className="text-xs text-yellow-600 dark:text-yellow-400 space-y-0.5">
+                    {plugin.validation.warnings.map((w, i) => (
+                      <div key={i}>Warning: {w}</div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Validation errors */}
+                {plugin.validation.errors.length > 0 && (
+                  <div className="text-xs text-red-600 dark:text-red-400 space-y-0.5">
+                    {plugin.validation.errors.map((e, i) => (
+                      <div key={i}>Error: {e}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       {/* Divider */}

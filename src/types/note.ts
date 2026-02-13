@@ -41,6 +41,23 @@ export interface McpStatus {
   port: number;
 }
 
+export interface PluginValidation {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface PluginInfo {
+  name: string;
+  version: string;
+  description: string;
+  enabled: boolean;
+  tool_count: number;
+  webhook_count: number;
+  permissions: string[];
+  validation: PluginValidation;
+}
+
 export interface WebhookLogEntry {
   timestamp: string;
   plugin: string;
