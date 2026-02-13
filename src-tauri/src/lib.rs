@@ -464,8 +464,41 @@ fn is_effectively_empty(s: &str) -> bool {
 }
 
 // Utility: Extract title from markdown content
+// Handles YAML frontmatter: if a file starts with ---, skip to after the closing ---
+// and also check for a title: field inside the frontmatter.
 fn extract_title(content: &str) -> String {
-    for line in content.lines() {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut start = 0;
+
+    // Check for YAML frontmatter (starts with ---)
+    if !lines.is_empty() && lines[0].trim() == "---" {
+        let mut frontmatter_title: Option<String> = None;
+
+        // Find closing --- and extract title: field
+        for i in 1..lines.len() {
+            let trimmed = lines[i].trim();
+            if trimmed == "---" {
+                start = i + 1;
+                break;
+            }
+            // Extract title from frontmatter "title: ..." or 'title: "..."'
+            if let Some(rest) = trimmed.strip_prefix("title:") {
+                let val = rest.trim();
+                let val = val.trim_matches('"').trim_matches('\'');
+                if !val.is_empty() {
+                    frontmatter_title = Some(val.to_string());
+                }
+            }
+        }
+
+        // If we found a title in frontmatter, use it
+        if let Some(title) = frontmatter_title {
+            return title;
+        }
+    }
+
+    // Search body for a # heading or first non-empty line
+    for line in lines.iter().skip(start) {
         let trimmed = line.trim();
         if let Some(title) = trimmed.strip_prefix("# ") {
             let title = title.trim();
@@ -482,10 +515,28 @@ fn extract_title(content: &str) -> String {
 
 // Utility: Generate preview from content (strip markdown formatting)
 fn generate_preview(content: &str) -> String {
-    // Skip the first line (title), find first non-empty line
-    for line in content.lines().skip(1) {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut start = 0;
+
+    // Skip YAML frontmatter if present
+    if !lines.is_empty() && lines[0].trim() == "---" {
+        for i in 1..lines.len() {
+            if lines[i].trim() == "---" {
+                start = i + 1;
+                break;
+            }
+        }
+    }
+
+    // Skip the title line, find first non-empty content line
+    let mut skipped_title = false;
+    for line in lines.iter().skip(start) {
         let trimmed = line.trim();
         if !trimmed.is_empty() {
+            if !skipped_title {
+                skipped_title = true;
+                continue;
+            }
             let stripped = strip_markdown(trimmed);
             if !stripped.is_empty() {
                 return stripped.chars().take(100).collect();
