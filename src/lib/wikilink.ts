@@ -62,11 +62,19 @@ export function injectWikilinks(blocks: AnyBlock[]): AnyBlock[] {
     if (processed.type === "table" && processed.content?.type === "tableContent") {
       processed.content = {
         ...processed.content,
-        rows: processed.content.rows.map((row: { cells: AnyInlineContent[][] }) => ({
+        rows: processed.content.rows.map((row: { cells: AnyInlineContent[] }) => ({
           ...row,
-          cells: row.cells.map((cell: AnyInlineContent[]) =>
-            processInlineContent(cell),
-          ),
+          cells: row.cells.map((cell: AnyInlineContent) => {
+            // Cell may be { type: "tableCell", content: [...], props: {...} }
+            if (cell && typeof cell === "object" && Array.isArray(cell.content)) {
+              return { ...cell, content: processInlineContent(cell.content) };
+            }
+            // Or a flat array of inline content
+            if (Array.isArray(cell)) {
+              return processInlineContent(cell);
+            }
+            return cell;
+          }),
         })),
       };
     }

@@ -372,6 +372,27 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
     return preprocessSvg(preprocessDatabaseRefs(preprocessBookmarks(preprocessCallouts(body))));
   }, []);
 
+  // Parse markdown to blocks with fallback to raw text paragraphs
+  const parseMarkdownSafe = useCallback(
+    (body: string) => {
+      try {
+        const blocks = editor.tryParseMarkdownToBlocks(body);
+        if (blocks && blocks.length > 0) {
+          return injectWikilinks(blocks);
+        }
+      } catch (err) {
+        console.error("[Editor] Parse pipeline failed:", err);
+      }
+      // Fallback: split markdown into paragraphs so content is at least visible
+      const lines = body.split("\n");
+      return lines.map((line) => ({
+        type: "paragraph" as const,
+        content: [{ type: "text" as const, text: line, styles: {} }],
+      }));
+    },
+    [editor],
+  );
+
   // Load note content when the current note changes
   useEffect(() => {
     if (!currentNote || !editor) return;
@@ -391,12 +412,12 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
         loadedModifiedRef.current = currentNote.modified;
         isLoadingRef.current = true;
 
+        const body = extractBody(currentNote.content);
+        const blocks = parseMarkdownSafe(body);
         try {
-          const body = extractBody(currentNote.content);
-          const blocks = injectWikilinks(editor.tryParseMarkdownToBlocks(body));
           editor.replaceBlocks(editor.document, blocks);
-        } catch {
-          // Fallback: ignore parse errors
+        } catch (err) {
+          console.error("BlockNote replaceBlocks failed:", err);
         }
         isLoadingRef.current = false;
         return;
@@ -425,13 +446,13 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
     isLoadingRef.current = true;
 
     // Parse frontmatter and load body into BlockNote
+    const body = extractBody(currentNote.content);
+    const blocks = parseMarkdownSafe(body);
+    if (loadedNoteIdRef.current !== loadingNoteId) return;
     try {
-      const body = extractBody(currentNote.content);
-      const blocks = injectWikilinks(editor.tryParseMarkdownToBlocks(body));
-      if (loadedNoteIdRef.current !== loadingNoteId) return;
       editor.replaceBlocks(editor.document, blocks);
-    } catch {
-      // Fallback: ignore parse errors
+    } catch (err) {
+      console.error("BlockNote replaceBlocks failed:", err);
     }
 
     scrollContainerRef.current?.scrollTo(0, 0);
@@ -455,7 +476,7 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
         clearPendingCursorLine();
       }
     });
-  }, [currentNote, editor, flushPendingSave, reloadVersion, extractBody, pendingCursorLine, clearPendingCursorLine]);
+  }, [currentNote, editor, flushPendingSave, reloadVersion, extractBody, parseMarkdownSafe, pendingCursorLine, clearPendingCursorLine]);
 
   // Scroll to top on mount
   useEffect(() => {
