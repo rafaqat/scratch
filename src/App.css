@@ -1779,3 +1779,26 @@ html.dark {
   font-size: 0.7rem;
   color: #dc2626;
 }
+
+/* Standard links in editor */
+.bn-editor a {
+  color: #2563eb;
+  text-decoration: none;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0 2px;
+  transition: background 0.15s ease;
+}
+
+.bn-editor a:hover {
+  text-decoration: underline;
+  background: rgba(59, 130, 246, 0.15);
+}
+
+.dark .bn-editor a {
+  color: #60a5fa;
+}
+
+.dark .bn-editor a:hover {
+  background: rgba(96, 165, 250, 0.2);
+}

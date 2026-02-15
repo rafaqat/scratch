@@ -209,7 +209,13 @@ scratch/
 ├── src-tauri/                      # Rust backend
 │   ├── src/
 │   │   ├── lib.rs                  # Tauri commands, state, file watcher, search
-│   │   └── git.rs                  # Git CLI wrapper (8 commands)
+│   │   ├── mcp.rs                  # MCP server (JSON-RPC, tool definitions, handlers)
+│   │   ├── mcp_instructions.md     # MCP instructions sent to clients (compiled in)
+│   │   ├── git.rs                  # Git CLI wrapper (8 commands)
+│   │   ├── stories.rs              # Stories/kanban engine
+│   │   ├── database.rs             # Database engine (schema, query, CRUD)
+│   │   ├── plugins.rs              # Plugin manifest loading & tool dispatch
+│   │   └── webhooks.rs             # Webhook receiver for plugins
 │   ├── capabilities/default.json   # Tauri permissions config
 │   └── Cargo.toml                  # Rust dependencies
 └── package.json                    # Node dependencies & scripts
@@ -373,6 +379,48 @@ The app watches the notes folder for external changes (e.g., from AI agents or o
 - Inline editing (commits)
 - Non-blocking operations (async everything)
 - Error handling with user-friendly messages
+
+## MCP Server
+
+Scratch includes a built-in MCP (Model Context Protocol) server that exposes notes, databases, and stories to AI agents like Claude Code.
+
+### Configuration
+
+- **Default port**: 3921 (configurable in settings)
+- **Enable/disable**: Settings → General → MCP Server toggle
+- **Protocol**: HTTP JSON-RPC 2.0 at `POST http://127.0.0.1:{port}/mcp`
+- **Health check**: `GET http://127.0.0.1:{port}/health`
+- **Implementation**: `src-tauri/src/mcp.rs`
+- **Instructions file**: `src-tauri/src/mcp_instructions.md` (compiled into the binary via `include_str!`, sent to clients on `initialize`)
+
+### Tool Categories (30+ tools)
+
+**Notes CRUD (7):** `scratch_list_notes`, `scratch_read_note`, `scratch_create_note`, `scratch_update_note`, `scratch_delete_note`, `scratch_append_to_note`, `scratch_get_info`
+
+**Search & Replace (3):** `scratch_search_notes` (Tantivy full-text), `scratch_find` (exact/fuzzy/regex), `scratch_replace_in_note`
+
+**Folders & Files (5):** `scratch_list_folders`, `scratch_create_folder`, `scratch_move_note`, `scratch_list_directory`, `scratch_read_file`
+
+**Stories/Kanban (9):** `stories_epics_list`, `stories_boards_get`, `stories_list`, `stories_get`, `stories_create`, `stories_update`, `stories_move`, `stories_search`, `stories_validate`
+
+**Databases (7):** `db_list`, `db_get_schema`, `db_query`, `db_insert_row`, `db_update_row`, `db_delete_row`, `db_create`
+
+**Plugin tools**: Dynamically loaded from `.scratch/plugins/` manifests, prefixed with `plugin_`
+
+### Key Patterns
+
+- **Note IDs**: Filename without `.md`. Path-based for subfolders: `projects/todo`
+- **Database IDs**: Folder path relative to notes root: `my-tasks`
+- **Concurrency control**: Stories and database rows use etag-based optimistic concurrency. Read → get etag → pass etag on update/move. CONFLICT error on mismatch.
+- **Audit log**: Story operations logged to `.scratch/audit/events.jsonl`
+
+### Adding New MCP Tools
+
+1. Add tool definition JSON to `get_tools()` in `mcp.rs`
+2. Add `async fn tool_xxx()` implementation in `mcp.rs`
+3. Add match arm in `handle_tools_call()` dispatcher
+4. Document in `mcp_instructions.md` (this gets sent to MCP clients)
+5. Rebuild (`npm run tauri dev` will auto-recompile)
 
 ## Recent Development
 

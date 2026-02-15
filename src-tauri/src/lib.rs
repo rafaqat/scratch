@@ -13,6 +13,8 @@ use tantivy::query::QueryParser;
 use tantivy::schema::*;
 use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::webview::{NewWindowResponse, WebviewWindowBuilder};
+use tauri::WebviewUrl;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tokio::fs;
 
@@ -1085,7 +1087,17 @@ pub async fn list_notes_impl(
 
 #[tauri::command]
 async fn list_notes(state: State<'_, AppState>) -> Result<Vec<NoteMetadata>, String> {
-    list_notes_impl(&state, None, false).await
+    list_notes_impl(&state, None, true).await
+}
+
+#[tauri::command]
+async fn list_folders(parent: Option<String>, state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    list_folders_impl(parent, &state).await
+}
+
+#[tauri::command]
+async fn list_notes_in_folder(folder: Option<String>, state: State<'_, AppState>) -> Result<Vec<NoteMetadata>, String> {
+    list_notes_impl(&state, folder.as_deref(), false).await
 }
 
 pub async fn read_note_impl(id: String, state: &AppState) -> Result<Note, String> {
@@ -4571,6 +4583,7 @@ fn db_create_row_from_template(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
@@ -4633,12 +4646,68 @@ pub fn run() {
             }
 
             app.manage(state);
+
+            // Create main window programmatically so we can attach on_navigation / on_new_window
+            let app_handle = app.handle().clone();
+            let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+                .title("Scratch")
+                .inner_size(1080.0, 720.0)
+                .min_inner_size(600.0, 400.0)
+                .resizable(true)
+                .decorations(true)
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true)
+                .on_navigation(|url| {
+                    // Allow Tauri internal URLs and localhost dev server
+                    let host = url.host_str().unwrap_or("");
+                    host == "localhost" || host == "tauri.localhost" || host == "ipc.localhost" || host == "asset.localhost" || url.scheme() == "tauri"
+                })
+                .on_new_window(move |url, _features| {
+                    // Intercept window.open calls (e.g. BlockNote "Open link" button)
+                    let href = url.to_string();
+                    let host = url.host_str().unwrap_or("").to_ascii_lowercase();
+                    let is_local_host = host == "localhost" || host.ends_with(".localhost");
+                    let is_internal_webview = is_local_host || url.scheme() == "tauri";
+
+                    // Anchor links — ignore
+                    if href.starts_with("#") {
+                        return NewWindowResponse::Deny;
+                    }
+
+                    // Local markdown links should navigate within the app, not open externally.
+                    if href.contains(".md") && is_internal_webview {
+                        let _ = app_handle.emit("link-navigate", href);
+                        return NewWindowResponse::Deny;
+                    }
+
+                    // Other localhost/tauri links are internal; suppress browser opens.
+                    if is_internal_webview {
+                        return NewWindowResponse::Deny;
+                    }
+
+                    // External URLs — open in default browser via opener plugin
+                    if href.starts_with("http://") || href.starts_with("https://") || href.starts_with("mailto:") {
+                        let _ = tauri_plugin_opener::open_url(&href, None::<&str>);
+                    }
+
+                    NewWindowResponse::Deny
+                });
+
+            #[cfg(target_os = "macos")]
+            {
+                builder = builder.traffic_light_position(tauri::LogicalPosition::new(16.0, 24.0));
+            }
+
+            builder.build()?;
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_notes_folder,
             set_notes_folder,
             list_notes,
+            list_folders,
+            list_notes_in_folder,
             read_note,
             save_note,
             delete_note,

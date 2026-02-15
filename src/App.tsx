@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { NotesProvider, useNotes } from "./context/NotesContext";
 import { ThemeProvider } from "./context/ThemeContext";
@@ -16,6 +16,7 @@ import {
   check as checkForUpdate,
   type Update,
 } from "@tauri-apps/plugin-updater";
+import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import * as aiService from "./services/ai";
 
 type ViewState = "notes" | "settings";
@@ -38,6 +39,48 @@ function AppContent() {
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [aiModalOpen, setAiModalOpen] = useState(false);
   const [aiEditing, setAiEditing] = useState(false);
+
+  // Handle deep links (scratch://...)
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    const startListener = async () => {
+      try {
+        unlisten = await onOpenUrl((urls) => {
+          console.log("Deep link received:", urls);
+          for (const url of urls) {
+            try {
+              const parsed = new URL(url);
+              // Handle scratch://open?id=...
+              if (parsed.host === "open" && parsed.searchParams.has("id")) {
+                const noteId = parsed.searchParams.get("id");
+                if (noteId) {
+                  selectNote(decodeURIComponent(noteId));
+                }
+              }
+              // Handle scratch://note/folder/filename
+              else if (parsed.host === "note") {
+                const path = parsed.pathname.replace(/^\//, ""); // strip leading slash
+                if (path) {
+                  selectNote(decodeURIComponent(path));
+                }
+              }
+            } catch (err) {
+              console.error("Failed to parse deep link:", err);
+            }
+          }
+        });
+      } catch (error) {
+        console.error("Failed to setup deep link listener:", error);
+      }
+    };
+
+    startListener();
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [selectNote]);
 
   const toggleSidebar = useCallback(() => {
     setSidebarVisible((prev) => !prev);
@@ -391,6 +434,64 @@ function UpdateToast({
   );
 }
 
+function DebugConsole() {
+  const [logs, setLogs] = useState<{ ts: string; msg: string; level: string }[]>([]);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const bufferRef = useRef<{ ts: string; msg: string; level: string }[]>([]);
+  const flushScheduledRef = useRef(false);
+
+  useEffect(() => {
+    const origLog = console.log;
+    const origWarn = console.warn;
+    const origError = console.error;
+
+    const scheduleFlush = () => {
+      if (!flushScheduledRef.current) {
+        flushScheduledRef.current = true;
+        requestAnimationFrame(() => {
+          flushScheduledRef.current = false;
+          const batch = bufferRef.current.splice(0);
+          if (batch.length > 0) {
+            setLogs((prev) => [...prev, ...batch].slice(-80));
+          }
+        });
+      }
+    };
+
+    const addLog = (level: string, args: unknown[]) => {
+      const ts = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      const msg = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a, null, 0))).join(" ");
+      bufferRef.current.push({ ts, msg, level });
+      scheduleFlush();
+    };
+
+    console.log = (...args: unknown[]) => { origLog(...args); addLog("log", args); };
+    console.warn = (...args: unknown[]) => { origWarn(...args); addLog("warn", args); };
+    console.error = (...args: unknown[]) => { origError(...args); addLog("error", args); };
+
+    return () => { console.log = origLog; console.warn = origWarn; console.error = origError; };
+  }, []);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [logs]);
+
+  const levelColor = (l: string) => l === "error" ? "text-red-400" : l === "warn" ? "text-yellow-400" : "text-green-300";
+
+  return (
+    <div className="fixed bottom-0 left-0 right-0 h-36 z-[9999] bg-black/90 text-[11px] font-mono overflow-y-auto border-t border-white/10 px-2 py-1">
+      {logs.map((l, i) => (
+        <div key={i} className="flex gap-2 leading-4">
+          <span className="text-white/30 shrink-0">{l.ts}</span>
+          <span className={`${levelColor(l.level)} shrink-0 w-10`}>{l.level}</span>
+          <span className="text-white/80 break-all">{l.msg}</span>
+        </div>
+      ))}
+      <div ref={bottomRef} />
+    </div>
+  );
+}
+
 function App() {
   // Add platform class for OS-specific styling (e.g., keyboard shortcuts)
   useEffect(() => {
@@ -416,6 +517,7 @@ function App() {
           </GitProvider>
         </NotesProvider>
       </TooltipProvider>
+      <DebugConsole />
     </ThemeProvider>
   );
 }

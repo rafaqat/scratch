@@ -444,3 +444,159 @@ Stories should include these markdown headings for consistency:
 ### Audit Log
 
 All story create/update/move operations are logged to `.scratch/audit/events.jsonl` in the notes folder. Each line is a JSON object with: action, actor, id, before, after, timestamp.
+
+## Databases
+
+Databases are structured collections stored as folders in the notes directory. Each database folder contains a `_schema.md` file (YAML column definitions and view configs) and row `.md` files with matching frontmatter.
+
+### Database File Structure
+
+```
+my-tasks/
+  _schema.md          # schema: columns, views, next_row_id
+  row-001.md          # row data as YAML frontmatter + optional markdown body
+  row-002.md
+```
+
+### Column Types
+
+Supported column types: `text`, `number`, `date`, `select`, `multi-select`, `checkbox`, `relation`, `url`.
+
+- `select` / `multi-select` require an `options` array of allowed values
+- `relation` requires a `target` database folder name
+
+### Database Tools
+
+**db_list** — List all databases with name, ID, row count, and column count.
+```json
+{}
+```
+
+**db_get_schema** — Get full schema including columns, views, and next row ID.
+```json
+{"database_id": "my-tasks"}
+```
+
+**db_query** — Query rows with filtering, sorting, and pagination.
+```json
+{"database_id": "my-tasks"}                                              // all rows
+{"database_id": "my-tasks", "filters": [{"field": "status", "operator": "eq", "value": "Done"}]}
+{"database_id": "my-tasks", "sort": {"field": "priority", "direction": "desc"}, "limit": 10}
+{"database_id": "my-tasks", "filters": [
+  {"field": "assignee", "operator": "eq", "value": "sara"},
+  {"field": "points", "operator": "gte", "value": 3}
+], "sort": {"field": "points", "direction": "desc"}, "limit": 20, "offset": 0}
+```
+
+Filter operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `contains`, `not_contains`, `starts_with`, `ends_with`, `is_empty`, `is_not_empty`.
+
+**db_insert_row** — Create a new row. Field values must match column types.
+```json
+{
+  "database_id": "my-tasks",
+  "fields": {
+    "title": "Fix login bug",
+    "status": "Open",
+    "priority": 1,
+    "assignee": "alex"
+  },
+  "body": "## Details\n\nThe login form fails when..."
+}
+```
+
+**db_update_row** — Update specific fields on a row. Uses etag for concurrency control.
+```json
+{
+  "database_id": "my-tasks",
+  "row_id": "row-001",
+  "etag": "abc123",
+  "fields": {"status": "Done", "priority": 0}
+}
+```
+
+**db_delete_row** — Permanently delete a row.
+```json
+{"database_id": "my-tasks", "row_id": "row-001"}
+```
+
+**db_create** — Create a new database with schema definition.
+```json
+{
+  "name": "My Tasks",
+  "columns": [
+    {"id": "title", "name": "Title", "type": "text"},
+    {"id": "status", "name": "Status", "type": "select", "options": ["Open", "In Progress", "Done"]},
+    {"id": "priority", "name": "Priority", "type": "number"},
+    {"id": "assignee", "name": "Assignee", "type": "text"},
+    {"id": "due", "name": "Due Date", "type": "date"},
+    {"id": "tags", "name": "Tags", "type": "multi-select", "options": ["bug", "feature", "docs"]},
+    {"id": "done", "name": "Complete", "type": "checkbox"},
+    {"id": "link", "name": "URL", "type": "url"}
+  ]
+}
+```
+
+### Common Database Workflows
+
+**Create a task tracker:**
+```json
+db_create {
+  "name": "Sprint Board",
+  "columns": [
+    {"id": "title", "name": "Title", "type": "text"},
+    {"id": "status", "name": "Status", "type": "select", "options": ["Backlog", "In Progress", "Done"]},
+    {"id": "owner", "name": "Owner", "type": "text"},
+    {"id": "points", "name": "Points", "type": "number"}
+  ]
+}
+
+db_insert_row {
+  "database_id": "sprint-board",
+  "fields": {"title": "Implement auth", "status": "Backlog", "owner": "sara", "points": 5}
+}
+```
+
+**Query with filters and update:**
+```json
+db_query {
+  "database_id": "sprint-board",
+  "filters": [{"field": "status", "operator": "eq", "value": "In Progress"}],
+  "sort": {"field": "points", "direction": "desc"}
+}
+// → returns rows with etags
+
+db_update_row {
+  "database_id": "sprint-board",
+  "row_id": "row-001",
+  "etag": "etag_from_query",
+  "fields": {"status": "Done"}
+}
+```
+
+**Handle etag conflict:**
+```json
+db_update_row {"database_id": "sprint-board", "row_id": "row-001", "etag": "stale_etag", "fields": {"status": "Done"}}
+// → Error: CONFLICT with current etag
+
+db_query {"database_id": "sprint-board", "filters": [{"field": "row_id", "operator": "eq", "value": "row-001"}]}
+// → fresh etag
+
+db_update_row {"database_id": "sprint-board", "row_id": "row-001", "etag": "fresh_etag", "fields": {"status": "Done"}}
+```
+
+## Application Features
+
+Scratch is a Notion-like markdown note-taking app with these key features:
+
+- **Block-based editor** — Notion-style editing powered by BlockNote with slash menu, drag-and-drop, formatting toolbar, tables, task lists, code blocks, callouts, equations, bookmarks, and table of contents
+- **Wikilinks** — `[[Note Title]]` syntax for linking between notes, with a backlinks panel showing incoming references
+- **Folder hierarchy** — Notes organized in nested folders with tree navigation in the sidebar
+- **Full-text search** — Tantivy-powered search engine with instant results
+- **Databases** — Structured data as markdown-native tables/boards with typed columns, filtering, and sorting
+- **Kanban stories** — Project management with epics, stories, and status lanes
+- **Templates** — Note and database row templates with variable substitution (`{{date}}`, `{{title}}`)
+- **Git integration** — Optional git commit/push from within the app
+- **AI editing** — Claude Code CLI integration for AI-powered note editing
+- **MCP server** — This server, enabling programmatic access to all notes, databases, and stories
+- **Plugin system** — Extensible via plugin manifests with custom MCP tools and webhooks
+- **Cross-platform** — macOS and Windows via Tauri v2

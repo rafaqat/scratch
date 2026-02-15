@@ -10,21 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      {
-        "title": "Scratch",
-        "width": 1080,
-        "height": 720,
-        "minWidth": 600,
-        "minHeight": 400,
-        "resizable": true,
-        "decorations": true,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true,
-        "dragDropEnabled": false,
-        "trafficLightPosition": { "x": 16, "y": 24 }
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'",
       "assetProtocol": {
@@ -47,7 +33,12 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "10.15",
+      "entitlements": null,
+      "exceptionDomain": "",
+      "frameworks": [],
+      "providerShortName": null,
+      "signingIdentity": null
     },
     "windows": {
       "webviewInstallMode": {
