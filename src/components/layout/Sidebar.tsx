@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { toast } from "sonner";
 import { useNotes } from "../../context/NotesContext";
 import { useTheme } from "../../context/ThemeContext";
 import { NoteList } from "../notes/NoteList";
 import { Footer } from "./Footer";
-import { IconButton, Input, Tooltip } from "../ui";
+import { IconButton, Input, Tooltip, Button } from "../ui";
 import * as templatesService from "../../services/templates";
 import type { TemplateInfo } from "../../services/templates";
 import {
@@ -17,8 +18,29 @@ import {
   FolderIcon,
   TemplateIcon,
   AddNoteIcon,
+  TrashIcon,
 } from "../icons";
 import { mod, isMac } from "../../lib/platform";
+
+interface TrashedNote {
+  id: string;
+  title: string;
+  originalPath: string;
+  deletedAt: string;
+  preview: string;
+}
+
+function formatTrashDate(isoString: string): string {
+  const date = new Date(isoString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffDays === 0) return "Deleted today";
+  if (diffDays === 1) return "Deleted yesterday";
+  if (diffDays < 7) return `Deleted ${diffDays} days ago`;
+  return `Deleted ${date.toLocaleDateString([], { month: "short", day: "numeric" })}`;
+}
 
 interface SidebarProps {
   onOpenSettings?: () => void;
@@ -31,6 +53,9 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [inputValue, setInputValue] = useState(searchQuery);
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [trashItems, setTrashItems] = useState<TrashedNote[]>([]);
+  const [trashCount, setTrashCount] = useState(0);
   const debounceRef = useRef<number | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -118,6 +143,68 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
       console.error("Failed to select folder:", err);
     }
   }, [notesFolder, setNotesFolder, reloadSettings]);
+
+  // Load trash count on mount and when notes change
+  const loadTrashCount = useCallback(async () => {
+    try {
+      const items = await invoke<TrashedNote[]>("list_trash");
+      setTrashCount(items.length);
+      if (trashOpen) setTrashItems(items);
+    } catch {
+      // Ignore - trash may not exist yet
+    }
+  }, [trashOpen]);
+
+  useEffect(() => {
+    if (notesFolder) loadTrashCount();
+  }, [notesFolder, notes, loadTrashCount]);
+
+  const toggleTrash = useCallback(async () => {
+    if (!trashOpen) {
+      try {
+        const items = await invoke<TrashedNote[]>("list_trash");
+        setTrashItems(items);
+        setTrashCount(items.length);
+      } catch {
+        setTrashItems([]);
+      }
+    }
+    setTrashOpen((prev) => !prev);
+  }, [trashOpen]);
+
+  const handleRestore = useCallback(async (id: string) => {
+    try {
+      await invoke("restore_note", { id });
+      toast.success("Note restored");
+      const items = await invoke<TrashedNote[]>("list_trash");
+      setTrashItems(items);
+      setTrashCount(items.length);
+    } catch (e) {
+      toast.error(`Failed to restore: ${e}`);
+    }
+  }, []);
+
+  const handleDeletePermanently = useCallback(async (id: string) => {
+    try {
+      await invoke("delete_permanently", { id });
+      const items = await invoke<TrashedNote[]>("list_trash");
+      setTrashItems(items);
+      setTrashCount(items.length);
+    } catch (e) {
+      toast.error(`Failed to delete: ${e}`);
+    }
+  }, []);
+
+  const handleEmptyTrash = useCallback(async () => {
+    try {
+      const count = await invoke<number>("empty_trash");
+      toast.success(`Permanently deleted ${count} note${count === 1 ? "" : "s"}`);
+      setTrashItems([]);
+      setTrashCount(0);
+    } catch (e) {
+      toast.error(`Failed to empty trash: ${e}`);
+    }
+  }, []);
 
   // Extract just the folder name from the full path
   const folderName = notesFolder ? notesFolder.split("/").pop() || notesFolder : "Notes";
@@ -227,8 +314,81 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
         )}
 
         {/* Note list */}
-        <NoteList />
+        {!trashOpen && <NoteList />}
+
+        {/* Trash panel */}
+        {trashOpen && (
+          <div className="flex flex-col gap-0.5 p-1.5">
+            {trashItems.length === 0 ? (
+              <div className="p-4 text-center text-sm text-text-muted select-none">
+                Trash is empty
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between px-2 py-1">
+                  <span className="text-xs text-text-muted">{trashItems.length} deleted note{trashItems.length === 1 ? "" : "s"}</span>
+                  <Button
+                    onClick={handleEmptyTrash}
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs h-6 px-2 text-red-500 hover:text-red-600 hover:bg-red-500/10"
+                  >
+                    Empty Trash
+                  </Button>
+                </div>
+                {trashItems.map((item) => (
+                  <div
+                    key={item.id}
+                    className="group px-2.5 py-2 rounded-md hover:bg-bg-muted transition-colors"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium truncate flex-1">{item.title || "Untitled"}</span>
+                    </div>
+                    <div className="text-2xs text-text-muted mt-0.5 truncate">
+                      {item.originalPath}
+                    </div>
+                    <div className="text-2xs text-text-muted/60 mt-0.5">
+                      {formatTrashDate(item.deletedAt)}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button
+                        onClick={() => handleRestore(item.id)}
+                        variant="outline"
+                        size="sm"
+                        className="h-6 text-xs px-2"
+                      >
+                        Restore
+                      </Button>
+                      <Button
+                        onClick={() => handleDeletePermanently(item.id)}
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 text-xs px-2 text-red-500 hover:text-red-600 hover:bg-red-500/10"
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Trash toggle */}
+      <button
+        onClick={toggleTrash}
+        className={`flex items-center gap-2 px-3.5 py-2 text-sm border-t border-border transition-colors select-none cursor-pointer ${
+          trashOpen ? "bg-bg-muted text-text" : "text-text-muted hover:text-text hover:bg-bg-muted/50"
+        }`}
+      >
+        <TrashIcon className="w-3.5 h-3.5 stroke-[1.5]" />
+        <span className="text-xs font-medium">Trash</span>
+        {trashCount > 0 && (
+          <span className="text-2xs text-text-muted/60 bg-bg-muted rounded px-1 py-px ml-auto">{trashCount}</span>
+        )}
+      </button>
 
       {/* Footer with git status, commit, and settings */}
       <Footer onOpenSettings={onOpenSettings} />

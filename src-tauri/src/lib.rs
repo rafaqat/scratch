@@ -32,6 +32,8 @@ pub struct NoteMetadata {
     pub title: String,
     pub preview: String,
     pub modified: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 // Full note content
@@ -690,6 +692,27 @@ fn extract_title(content: &str) -> String {
     "Untitled".to_string()
 }
 
+// Utility: Extract icon emoji from frontmatter (icon: "emoji")
+fn extract_icon(content: &str) -> Option<String> {
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.is_empty() || lines[0].trim() != "---" {
+        return None;
+    }
+    for i in 1..lines.len() {
+        let trimmed = lines[i].trim();
+        if trimmed == "---" {
+            break;
+        }
+        if let Some(rest) = trimmed.strip_prefix("icon:") {
+            let val = rest.trim().trim_matches('"').trim_matches('\'');
+            if !val.is_empty() {
+                return Some(val.to_string());
+            }
+        }
+    }
+    None
+}
+
 // Utility: Generate preview from content (strip markdown formatting)
 fn generate_preview(content: &str) -> String {
     let lines: Vec<&str> = content.lines().collect();
@@ -1017,6 +1040,7 @@ pub async fn list_notes_impl(
                     title: extract_title(&content),
                     preview: generate_preview(&content),
                     modified,
+                    icon: extract_icon(&content),
                 });
             }
         }
@@ -1044,6 +1068,7 @@ pub async fn list_notes_impl(
                             title: extract_title(&content),
                             preview: generate_preview(&content),
                             modified,
+                            icon: extract_icon(&content),
                         });
                     }
                 }
@@ -1098,6 +1123,135 @@ async fn list_folders(parent: Option<String>, state: State<'_, AppState>) -> Res
 #[tauri::command]
 async fn list_notes_in_folder(folder: Option<String>, state: State<'_, AppState>) -> Result<Vec<NoteMetadata>, String> {
     list_notes_impl(&state, folder.as_deref(), false).await
+}
+
+#[tauri::command]
+async fn create_folder(folder_path: String, state: State<'_, AppState>) -> Result<String, String> {
+    create_folder_impl(folder_path, &state).await
+}
+
+#[tauri::command]
+async fn rename_folder(old_path: String, new_name: String, state: State<'_, AppState>) -> Result<String, String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+
+    let base = PathBuf::from(&notes_folder);
+    let validated_old = validate_note_id(&old_path)?;
+    let old_full = base.join(&validated_old);
+
+    if !old_full.exists() || !old_full.is_dir() {
+        return Err(format!("Folder not found: {}", old_path));
+    }
+
+    // Build new path: same parent, new name
+    let parent = old_full.parent().ok_or("Cannot rename root")?;
+    let sanitized_name = new_name.trim().replace(['/', '\\'], "-");
+    if sanitized_name.is_empty() {
+        return Err("Folder name cannot be empty".to_string());
+    }
+    let new_full = parent.join(&sanitized_name);
+
+    if new_full.exists() {
+        return Err(format!("A folder named '{}' already exists", sanitized_name));
+    }
+
+    // Safety: ensure new path stays within notes folder
+    let normalized_new = new_full.components().collect::<PathBuf>();
+    let normalized_base = base.components().collect::<PathBuf>();
+    if !normalized_new.starts_with(&normalized_base) {
+        return Err("Path escapes notes folder".to_string());
+    }
+
+    fs::rename(&old_full, &new_full)
+        .await
+        .map_err(|e| format!("Failed to rename folder: {}", e))?;
+
+    // Return new relative path
+    let new_rel = new_full.strip_prefix(&base)
+        .map_err(|_| "Failed to compute relative path".to_string())?
+        .to_string_lossy()
+        .replace('\\', "/");
+
+    // Rebuild search index to update all note IDs under renamed folder
+    {
+        let index = state.search_index.lock().expect("search index mutex");
+        if let Some(ref search_index) = *index {
+            let _ = search_index.rebuild_index(&PathBuf::from(&notes_folder));
+        }
+    }
+    // Clear notes cache since IDs changed
+    {
+        let mut cache = state.notes_cache.write().expect("cache write lock");
+        cache.clear();
+    }
+
+    Ok(new_rel)
+}
+
+#[tauri::command]
+async fn delete_folder(folder_path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+
+    let base = PathBuf::from(&notes_folder);
+    let validated = validate_note_id(&folder_path)?;
+    let full_path = base.join(&validated);
+
+    if !full_path.exists() || !full_path.is_dir() {
+        return Err(format!("Folder not found: {}", folder_path));
+    }
+
+    // Safety: ensure path is within notes folder and not the root itself
+    let normalized = full_path.components().collect::<PathBuf>();
+    let normalized_base = base.components().collect::<PathBuf>();
+    if !normalized.starts_with(&normalized_base) || normalized == normalized_base {
+        return Err("Cannot delete this folder".to_string());
+    }
+
+    // Collect note IDs to remove from search index before deletion
+    let mut note_ids = Vec::new();
+    let mut entries = fs::read_dir(&full_path).await.map_err(|e| e.to_string())?;
+    while let Some(entry) = entries.next_entry().await.map_err(|e| e.to_string())? {
+        let p = entry.path();
+        if p.extension().map_or(false, |ext| ext == "md") {
+            if let Some(id) = path_to_note_id(&base, &p) {
+                note_ids.push(id);
+            }
+        }
+    }
+
+    // Remove from search index
+    {
+        let index = state.search_index.lock().expect("search index mutex");
+        if let Some(ref search_index) = *index {
+            for id in &note_ids {
+                let _ = search_index.delete_note(id);
+            }
+        }
+    }
+
+    // Remove from cache
+    {
+        let mut cache = state.notes_cache.write().expect("cache write lock");
+        for id in &note_ids {
+            cache.remove(id);
+        }
+    }
+
+    fs::remove_dir_all(&full_path)
+        .await
+        .map_err(|e| format!("Failed to delete folder: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn move_note(id: String, destination: String, state: State<'_, AppState>) -> Result<Note, String> {
+    move_note_impl(id, destination, &state).await
 }
 
 pub async fn read_note_impl(id: String, state: &AppState) -> Result<Note, String> {
@@ -1231,6 +1385,18 @@ pub async fn save_note_impl(
         (new_id, note_dir.join(format!("{}.md", new_basename)), None)
     };
 
+    // Snapshot existing content for version history before overwriting
+    if file_path.exists() {
+        if let Ok(existing_content) = std::fs::read_to_string(&file_path) {
+            let snapshot_id = if let Some((ref old_id_str, _)) = old_id {
+                old_id_str.clone()
+            } else {
+                final_id.clone()
+            };
+            maybe_snapshot_note(&folder, &snapshot_id, &existing_content);
+        }
+    }
+
     // Write the file to the new path
     fs::write(&file_path, &content)
         .await
@@ -1347,7 +1513,8 @@ pub async fn delete_note_impl(id: String, state: &AppState) -> Result<(), String
 
 #[tauri::command]
 async fn delete_note(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    delete_note_impl(id, &state).await
+    // Soft delete: move to trash instead of permanent deletion
+    trash_note(id, state).await
 }
 
 pub async fn create_note_impl(
@@ -1418,6 +1585,11 @@ pub async fn create_note_impl(
 #[tauri::command]
 async fn create_note(state: State<'_, AppState>) -> Result<Note, String> {
     create_note_impl(None, &state).await
+}
+
+#[tauri::command]
+async fn create_note_in_folder(folder: String, state: State<'_, AppState>) -> Result<Note, String> {
+    create_note_impl(Some(folder), &state).await
 }
 
 // ── Template system ──────────────────────────────────────────────────────────
@@ -4412,6 +4584,854 @@ fn webhook_get_log(state: State<AppState>) -> Vec<webhooks::WebhookLogEntry> {
     }
 }
 
+// ---- Import / Export Commands ----
+
+/// Strip YAML frontmatter (---...---) from markdown content for clean export.
+fn strip_frontmatter(content: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.is_empty() || lines[0].trim() != "---" {
+        return content.to_string();
+    }
+    for i in 1..lines.len() {
+        if lines[i].trim() == "---" {
+            // Return everything after the closing ---
+            let rest = &lines[i + 1..];
+            let result = rest.join("\n");
+            return result.trim_start_matches('\n').to_string();
+        }
+    }
+    content.to_string()
+}
+
+/// Convert markdown to a styled HTML document.
+fn markdown_to_html_doc(title: &str, md_content: &str) -> String {
+    // Simple markdown to HTML: use basic conversion
+    // For proper rendering, we convert common patterns
+    let mut html_body = String::new();
+    let mut in_code_block = false;
+
+    for line in md_content.lines() {
+        if line.starts_with("```") {
+            if in_code_block {
+                html_body.push_str("</code></pre>\n");
+                in_code_block = false;
+            } else {
+                html_body.push_str("<pre><code>");
+                in_code_block = true;
+            }
+            continue;
+        }
+        if in_code_block {
+            html_body.push_str(&line.replace('<', "&lt;").replace('>', "&gt;"));
+            html_body.push('\n');
+            continue;
+        }
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            html_body.push_str("<br>\n");
+        } else if trimmed.starts_with("# ") {
+            html_body.push_str(&format!("<h1>{}</h1>\n", &trimmed[2..]));
+        } else if trimmed.starts_with("## ") {
+            html_body.push_str(&format!("<h2>{}</h2>\n", &trimmed[3..]));
+        } else if trimmed.starts_with("### ") {
+            html_body.push_str(&format!("<h3>{}</h3>\n", &trimmed[4..]));
+        } else if trimmed.starts_with("- [ ] ") {
+            html_body.push_str(&format!("<p><input type=\"checkbox\" disabled> {}</p>\n", &trimmed[6..]));
+        } else if trimmed.starts_with("- [x] ") {
+            html_body.push_str(&format!("<p><input type=\"checkbox\" checked disabled> {}</p>\n", &trimmed[6..]));
+        } else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+            html_body.push_str(&format!("<li>{}</li>\n", &trimmed[2..]));
+        } else if trimmed.starts_with("> ") {
+            html_body.push_str(&format!("<blockquote>{}</blockquote>\n", &trimmed[2..]));
+        } else if trimmed == "---" {
+            html_body.push_str("<hr>\n");
+        } else {
+            html_body.push_str(&format!("<p>{}</p>\n", trimmed));
+        }
+    }
+    if in_code_block {
+        html_body.push_str("</code></pre>\n");
+    }
+
+    // Apply inline formatting: bold, italic, code, links
+    let html_body = html_body
+        .replace("**", "<strong>") // Simple toggle (imperfect but functional)
+        .replace("__", "<strong>");
+
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{title}</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; line-height: 1.6; color: #333; }}
+  h1, h2, h3 {{ margin-top: 1.5em; }}
+  pre {{ background: #f5f5f5; padding: 1em; border-radius: 6px; overflow-x: auto; }}
+  code {{ background: #f5f5f5; padding: 0.2em 0.4em; border-radius: 3px; font-size: 0.9em; }}
+  pre code {{ background: none; padding: 0; }}
+  blockquote {{ border-left: 3px solid #ddd; margin: 1em 0; padding-left: 1em; color: #666; }}
+  hr {{ border: none; border-top: 1px solid #eee; margin: 2em 0; }}
+  li {{ margin: 0.25em 0; }}
+  img {{ max-width: 100%; }}
+</style>
+</head>
+<body>
+{html_body}
+</body>
+</html>"#,
+        title = title.replace('<', "&lt;").replace('>', "&gt;"),
+        html_body = html_body
+    )
+}
+
+#[tauri::command]
+async fn export_note_markdown(id: String, dest: String, include_frontmatter: bool, state: State<'_, AppState>) -> Result<(), String> {
+    let note = read_note_impl(id, &state).await?;
+    let content = if include_frontmatter {
+        note.content.clone()
+    } else {
+        strip_frontmatter(&note.content)
+    };
+    std::fs::write(&dest, content).map_err(|e| format!("Failed to write file: {}", e))
+}
+
+#[tauri::command]
+async fn export_note_html(id: String, dest: String, state: State<'_, AppState>) -> Result<(), String> {
+    let note = read_note_impl(id, &state).await?;
+    let clean = strip_frontmatter(&note.content);
+    let title = extract_title(&note.content);
+    let html = markdown_to_html_doc(&title, &clean);
+    std::fs::write(&dest, html).map_err(|e| format!("Failed to write file: {}", e))
+}
+
+#[tauri::command]
+async fn export_all_zip(dest: String, state: State<'_, AppState>) -> Result<usize, String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+    let base = PathBuf::from(&notes_folder);
+    let files = walk_md_files_sync(&base, &base)?;
+
+    let zip_file = std::fs::File::create(&dest).map_err(|e| format!("Failed to create zip: {}", e))?;
+    let mut zip = zip::ZipWriter::new(zip_file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    let mut count = 0;
+    for file_path in &files {
+        if let Ok(relative) = file_path.strip_prefix(&base) {
+            let name = relative.to_string_lossy().replace('\\', "/");
+            let content = std::fs::read_to_string(file_path).unwrap_or_default();
+            zip.start_file(&name, options).map_err(|e| format!("Zip error: {}", e))?;
+            use std::io::Write;
+            zip.write_all(content.as_bytes()).map_err(|e| format!("Zip write error: {}", e))?;
+            count += 1;
+        }
+    }
+    zip.finish().map_err(|e| format!("Zip finish error: {}", e))?;
+    Ok(count)
+}
+
+#[tauri::command]
+async fn import_notes(paths: Vec<String>, state: State<'_, AppState>) -> Result<usize, String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+    let dest_dir = PathBuf::from(&notes_folder);
+    let mut count = 0;
+
+    for path_str in &paths {
+        let src = PathBuf::from(path_str);
+        let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+        match ext {
+            "md" | "txt" => {
+                // Copy directly, renaming .txt to .md
+                let filename = src.file_stem().unwrap_or_default();
+                let dest_name = format!("{}.md", filename.to_string_lossy());
+                let dest_path = dest_dir.join(&dest_name);
+                // Avoid overwriting - add suffix if exists
+                let dest_path = unique_path(dest_path);
+                std::fs::copy(&src, &dest_path).map_err(|e| format!("Copy failed: {}", e))?;
+                count += 1;
+            }
+            "html" | "htm" => {
+                // Basic HTML to markdown conversion
+                let html_content = std::fs::read_to_string(&src).map_err(|e| format!("Read failed: {}", e))?;
+                let md_content = html_to_markdown(&html_content);
+                let filename = src.file_stem().unwrap_or_default();
+                let dest_name = format!("{}.md", filename.to_string_lossy());
+                let dest_path = dest_dir.join(&dest_name);
+                let dest_path = unique_path(dest_path);
+                std::fs::write(&dest_path, md_content).map_err(|e| format!("Write failed: {}", e))?;
+                count += 1;
+            }
+            _ => {} // Skip unsupported formats
+        }
+    }
+    Ok(count)
+}
+
+#[tauri::command]
+async fn import_zip(path: String, state: State<'_, AppState>) -> Result<usize, String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+    let dest_dir = PathBuf::from(&notes_folder);
+
+    let file = std::fs::File::open(&path).map_err(|e| format!("Failed to open zip: {}", e))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("Invalid zip: {}", e))?;
+    let mut count = 0;
+
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| format!("Zip entry error: {}", e))?;
+        let name = entry.name().to_string();
+
+        // Skip directories and non-markdown files, skip __MACOSX and hidden files
+        if entry.is_dir() || name.starts_with("__MACOSX") || name.contains("/.")  {
+            continue;
+        }
+
+        let ext = name.rsplit('.').next().unwrap_or("");
+        if ext != "md" && ext != "txt" && ext != "html" && ext != "htm" {
+            continue;
+        }
+
+        // Preserve folder structure from zip
+        let relative = PathBuf::from(&name);
+        let dest_path = dest_dir.join(&relative);
+
+        // Create parent dirs
+        if let Some(parent) = dest_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("Mkdir failed: {}", e))?;
+        }
+
+        let mut content = String::new();
+        use std::io::Read;
+        entry.read_to_string(&mut content).map_err(|e| format!("Read zip entry failed: {}", e))?;
+
+        // Convert HTML to markdown if needed
+        if ext == "html" || ext == "htm" {
+            let md = html_to_markdown(&content);
+            let md_path = dest_path.with_extension("md");
+            let md_path = unique_path(md_path);
+            std::fs::write(&md_path, md).map_err(|e| format!("Write failed: {}", e))?;
+        } else {
+            let dest_path = unique_path(dest_path);
+            std::fs::write(&dest_path, content).map_err(|e| format!("Write failed: {}", e))?;
+        }
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// Generate a unique file path by appending (1), (2) etc. if file exists.
+fn unique_path(path: PathBuf) -> PathBuf {
+    if !path.exists() {
+        return path;
+    }
+    let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+    let ext = path.extension().unwrap_or_default().to_string_lossy().to_string();
+    let parent = path.parent().unwrap_or(&path);
+    for i in 1..1000 {
+        let new_name = if ext.is_empty() {
+            format!("{} ({})", stem, i)
+        } else {
+            format!("{} ({}).{}", stem, i, ext)
+        };
+        let new_path = parent.join(new_name);
+        if !new_path.exists() {
+            return new_path;
+        }
+    }
+    path
+}
+
+/// Basic HTML to markdown converter using scraper.
+fn html_to_markdown(html: &str) -> String {
+    // Use scraper to extract text content with basic formatting
+    let document = scraper::Html::parse_document(html);
+
+    // Try to get body content, fall back to full document
+    let body_sel = scraper::Selector::parse("body").unwrap();
+    let root = document.select(&body_sel).next();
+
+    let mut md = String::new();
+    if let Some(body) = root {
+        convert_node_to_md(&body, &mut md);
+    } else {
+        // Just extract all text
+        md = document.root_element().text().collect::<Vec<_>>().join(" ");
+    }
+    md.trim().to_string()
+}
+
+fn convert_node_to_md(element: &scraper::ElementRef, out: &mut String) {
+    for child in element.children() {
+        match child.value() {
+            scraper::node::Node::Text(text) => {
+                let t = text.text.trim();
+                if !t.is_empty() {
+                    out.push_str(t);
+                }
+            }
+            scraper::node::Node::Element(el) => {
+                if let Some(child_ref) = scraper::ElementRef::wrap(child) {
+                    match el.name() {
+                        "h1" => {
+                            out.push_str("\n# ");
+                            convert_node_to_md(&child_ref, out);
+                            out.push_str("\n\n");
+                        }
+                        "h2" => {
+                            out.push_str("\n## ");
+                            convert_node_to_md(&child_ref, out);
+                            out.push_str("\n\n");
+                        }
+                        "h3" => {
+                            out.push_str("\n### ");
+                            convert_node_to_md(&child_ref, out);
+                            out.push_str("\n\n");
+                        }
+                        "p" | "div" => {
+                            convert_node_to_md(&child_ref, out);
+                            out.push_str("\n\n");
+                        }
+                        "br" => out.push('\n'),
+                        "strong" | "b" => {
+                            out.push_str("**");
+                            convert_node_to_md(&child_ref, out);
+                            out.push_str("**");
+                        }
+                        "em" | "i" => {
+                            out.push('*');
+                            convert_node_to_md(&child_ref, out);
+                            out.push('*');
+                        }
+                        "code" => {
+                            out.push('`');
+                            convert_node_to_md(&child_ref, out);
+                            out.push('`');
+                        }
+                        "pre" => {
+                            out.push_str("\n```\n");
+                            convert_node_to_md(&child_ref, out);
+                            out.push_str("\n```\n\n");
+                        }
+                        "a" => {
+                            let href = el.attr("href").unwrap_or("#");
+                            out.push('[');
+                            convert_node_to_md(&child_ref, out);
+                            out.push_str("](");
+                            out.push_str(href);
+                            out.push(')');
+                        }
+                        "li" => {
+                            out.push_str("- ");
+                            convert_node_to_md(&child_ref, out);
+                            out.push('\n');
+                        }
+                        "blockquote" => {
+                            out.push_str("> ");
+                            convert_node_to_md(&child_ref, out);
+                            out.push('\n');
+                        }
+                        "hr" => out.push_str("\n---\n\n"),
+                        "img" => {
+                            let src = el.attr("src").unwrap_or("");
+                            let alt = el.attr("alt").unwrap_or("image");
+                            out.push_str(&format!("![{}]({})", alt, src));
+                        }
+                        _ => convert_node_to_md(&child_ref, out),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+// ---- Trash Bin Commands ----
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TrashMeta {
+    original_path: String,
+    deleted_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TrashedNote {
+    id: String,
+    title: String,
+    original_path: String,
+    deleted_at: String,
+    preview: String,
+}
+
+fn get_trash_dir(notes_folder: &str) -> PathBuf {
+    PathBuf::from(notes_folder).join(".scratch").join("trash")
+}
+
+fn ensure_trash_dir(notes_folder: &str) -> Result<PathBuf, String> {
+    let trash = get_trash_dir(notes_folder);
+    std::fs::create_dir_all(&trash).map_err(|e| format!("Failed to create trash dir: {}", e))?;
+    Ok(trash)
+}
+
+/// Auto-purge trashed notes older than 30 days.
+fn purge_old_trash(notes_folder: &str) {
+    let trash_dir = get_trash_dir(notes_folder);
+    if !trash_dir.exists() {
+        return;
+    }
+    let now = chrono::Utc::now();
+    let cutoff = chrono::Duration::days(30);
+
+    if let Ok(entries) = std::fs::read_dir(&trash_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "json") && path.to_string_lossy().ends_with(".meta.json") {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Ok(meta) = serde_json::from_str::<TrashMeta>(&content) {
+                        if let Ok(deleted) = chrono::DateTime::parse_from_rfc3339(&meta.deleted_at) {
+                            if now.signed_duration_since(deleted) > cutoff {
+                                // Remove note file and meta
+                                // note file path derived from meta path
+                                // meta file name: foo.meta.json -> remove "foo.meta.json"
+                                let _ = std::fs::remove_file(&path);
+                                // The note file: strip ".meta.json" -> stem = "foo.meta", but we stored as "foo.md"
+                                let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+                                let note_stem = stem.strip_suffix(".meta").unwrap_or(&stem);
+                                let note_path = trash_dir.join(format!("{}.md", note_stem));
+                                let _ = std::fs::remove_file(&note_path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[tauri::command]
+async fn trash_note(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+
+    let file_path = resolve_note_path(&notes_folder, &id)?;
+    if !file_path.exists() {
+        return Err("Note not found".to_string());
+    }
+
+    let trash_dir = ensure_trash_dir(&notes_folder)?;
+
+    // Compute a safe filename for trash (flatten path separators)
+    let safe_name = id.replace('/', "__");
+    let trash_file = trash_dir.join(format!("{}.md", &safe_name));
+    let meta_file = trash_dir.join(format!("{}.meta.json", &safe_name));
+
+    // Move file to trash
+    std::fs::rename(&file_path, &trash_file)
+        .or_else(|_| {
+            // rename can fail across filesystems, fall back to copy + delete
+            std::fs::copy(&file_path, &trash_file)?;
+            std::fs::remove_file(&file_path)
+        })
+        .map_err(|e| format!("Failed to move to trash: {}", e))?;
+
+    // Write metadata
+    let meta = TrashMeta {
+        original_path: format!("{}.md", id),
+        deleted_at: chrono::Utc::now().to_rfc3339(),
+    };
+    let meta_json = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
+    std::fs::write(&meta_file, meta_json).map_err(|e| format!("Failed to write trash meta: {}", e))?;
+
+    // Update search index
+    {
+        let index = state.search_index.lock().expect("search index mutex");
+        if let Some(ref search_index) = *index {
+            let _ = search_index.delete_note(&id);
+        }
+    }
+
+    // Remove from cache
+    {
+        let mut cache = state.notes_cache.write().expect("cache write lock");
+        cache.remove(&id);
+    }
+
+    // Remove backlinks
+    {
+        let mut bl_index = state.backlinks_index.write().expect("backlinks write lock");
+        remove_backlinks_for_note(&mut bl_index, &id);
+        let _ = save_backlinks_index(&notes_folder, &bl_index);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn list_trash(state: State<'_, AppState>) -> Result<Vec<TrashedNote>, String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+
+    let trash_dir = get_trash_dir(&notes_folder);
+    if !trash_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut result = Vec::new();
+    for entry in std::fs::read_dir(&trash_dir).map_err(|e| e.to_string())?.flatten() {
+        let path = entry.path();
+        if !path.to_string_lossy().ends_with(".meta.json") {
+            continue;
+        }
+
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        let meta: TrashMeta = match serde_json::from_str(&content) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let note_stem = stem.strip_suffix(".meta").unwrap_or(&stem);
+        let note_path = trash_dir.join(format!("{}.md", note_stem));
+
+        if !note_path.exists() {
+            continue;
+        }
+
+        let note_content = std::fs::read_to_string(&note_path).unwrap_or_default();
+        let title = extract_title(&note_content);
+        let preview = generate_preview(&note_content);
+
+        result.push(TrashedNote {
+            id: note_stem.to_string(),
+            title,
+            original_path: meta.original_path,
+            deleted_at: meta.deleted_at,
+            preview,
+        });
+    }
+
+    // Sort by deletion date, newest first
+    result.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at));
+    Ok(result)
+}
+
+#[tauri::command]
+async fn restore_note(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+
+    let trash_dir = get_trash_dir(&notes_folder);
+    let note_path = trash_dir.join(format!("{}.md", &id));
+    let meta_path = trash_dir.join(format!("{}.meta.json", &id));
+
+    if !note_path.exists() {
+        return Err("Trashed note not found".to_string());
+    }
+
+    // Read meta to get original path
+    let meta_content = std::fs::read_to_string(&meta_path).map_err(|e| e.to_string())?;
+    let meta: TrashMeta = serde_json::from_str(&meta_content).map_err(|e| e.to_string())?;
+
+    let dest = PathBuf::from(&notes_folder).join(&meta.original_path);
+    let dest = unique_path(dest);
+
+    // Ensure parent dir exists
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {}", e))?;
+    }
+
+    // Move back
+    std::fs::rename(&note_path, &dest)
+        .or_else(|_| {
+            std::fs::copy(&note_path, &dest)?;
+            std::fs::remove_file(&note_path)
+        })
+        .map_err(|e| format!("Failed to restore: {}", e))?;
+
+    // Remove meta
+    let _ = std::fs::remove_file(&meta_path);
+
+    // Re-index the note
+    let base = PathBuf::from(&notes_folder);
+    if let Some(note_id) = path_to_note_id(&base, &dest) {
+        let content = std::fs::read_to_string(&dest).unwrap_or_default();
+        let index = state.search_index.lock().expect("search index mutex");
+        if let Some(ref search_index) = *index {
+            let title = extract_title(&content);
+            let modified = dest.metadata()
+                .and_then(|m| m.modified())
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64)
+                .unwrap_or(0);
+            let _ = search_index.index_note(&note_id, &title, &content, modified);
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn delete_permanently(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+
+    let trash_dir = get_trash_dir(&notes_folder);
+    let note_path = trash_dir.join(format!("{}.md", &id));
+    let meta_path = trash_dir.join(format!("{}.meta.json", &id));
+
+    if note_path.exists() {
+        std::fs::remove_file(&note_path).map_err(|e| format!("Failed to delete: {}", e))?;
+    }
+    if meta_path.exists() {
+        std::fs::remove_file(&meta_path).map_err(|e| format!("Failed to delete meta: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn empty_trash(state: State<'_, AppState>) -> Result<usize, String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+
+    let trash_dir = get_trash_dir(&notes_folder);
+    if !trash_dir.exists() {
+        return Ok(0);
+    }
+
+    let mut count = 0;
+    for entry in std::fs::read_dir(&trash_dir).map_err(|e| e.to_string())?.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            let _ = std::fs::remove_file(&path);
+            if path.extension().is_some_and(|e| e == "md") {
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
+}
+
+// ---- Version History Commands ----
+
+fn get_history_dir(notes_folder: &str) -> PathBuf {
+    PathBuf::from(notes_folder).join(".scratch").join("history")
+}
+
+fn get_note_history_dir(notes_folder: &str, note_id: &str) -> PathBuf {
+    let safe_name = note_id.replace('/', "__");
+    get_history_dir(notes_folder).join(safe_name)
+}
+
+/// Create a snapshot of a note's content for version history.
+/// Debounced: skips if last snapshot was less than 5 minutes ago.
+fn maybe_snapshot_note(notes_folder: &str, note_id: &str, content: &str) {
+    let history_dir = get_note_history_dir(notes_folder, note_id);
+
+    // Check if last snapshot is < 5 minutes old
+    if history_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&history_dir) {
+            let mut latest: Option<std::time::SystemTime> = None;
+            for entry in entries.flatten() {
+                if let Ok(meta) = entry.metadata() {
+                    if let Ok(modified) = meta.modified() {
+                        latest = Some(latest.map_or(modified, |l: std::time::SystemTime| l.max(modified)));
+                    }
+                }
+            }
+            if let Some(last) = latest {
+                if let Ok(elapsed) = last.elapsed() {
+                    if elapsed < Duration::from_secs(300) {
+                        return; // Less than 5 minutes since last snapshot
+                    }
+                }
+            }
+        }
+    }
+
+    // Create snapshot
+    let _ = std::fs::create_dir_all(&history_dir);
+    let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H-%M-%SZ").to_string();
+    let snapshot_path = history_dir.join(format!("{}.md", timestamp));
+    let _ = std::fs::write(&snapshot_path, content);
+
+    // Enforce 50-version limit
+    purge_note_history(&history_dir, 50);
+}
+
+fn purge_note_history(history_dir: &PathBuf, max_versions: usize) {
+    if let Ok(entries) = std::fs::read_dir(history_dir) {
+        let mut files: Vec<PathBuf> = entries
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+            .map(|e| e.path())
+            .collect();
+        // Sort by name (timestamp-based, so alphabetical = chronological)
+        files.sort();
+        // Remove oldest if over limit
+        while files.len() > max_versions {
+            if let Some(oldest) = files.first() {
+                let _ = std::fs::remove_file(oldest);
+                files.remove(0);
+            }
+        }
+    }
+}
+
+/// Purge version history to stay under 100MB total.
+fn purge_history_size(notes_folder: &str) {
+    let history_dir = get_history_dir(notes_folder);
+    if !history_dir.exists() {
+        return;
+    }
+
+    let max_bytes: u64 = 100 * 1024 * 1024; // 100MB
+
+    // Collect all history files with their sizes and modified times
+    let mut all_files: Vec<(PathBuf, u64, std::time::SystemTime)> = Vec::new();
+    if let Ok(note_dirs) = std::fs::read_dir(&history_dir) {
+        for dir_entry in note_dirs.flatten() {
+            if dir_entry.path().is_dir() {
+                if let Ok(files) = std::fs::read_dir(dir_entry.path()) {
+                    for file in files.flatten() {
+                        let path = file.path();
+                        if path.extension().is_some_and(|e| e == "md") {
+                            if let Ok(meta) = path.metadata() {
+                                let modified = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+                                all_files.push((path, meta.len(), modified));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let total: u64 = all_files.iter().map(|(_, size, _)| size).sum();
+    if total <= max_bytes {
+        return;
+    }
+
+    // Sort by modified time, oldest first
+    all_files.sort_by_key(|(_, _, t)| *t);
+
+    let mut current_total = total;
+    for (path, size, _) in &all_files {
+        if current_total <= max_bytes {
+            break;
+        }
+        let _ = std::fs::remove_file(path);
+        current_total -= size;
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VersionEntry {
+    id: String,          // timestamp filename (without .md)
+    timestamp: String,   // human-readable ISO timestamp
+    size: u64,           // file size in bytes
+}
+
+#[tauri::command]
+async fn list_versions(note_id: String, state: State<'_, AppState>) -> Result<Vec<VersionEntry>, String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+
+    let history_dir = get_note_history_dir(&notes_folder, &note_id);
+    if !history_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut versions = Vec::new();
+    for entry in std::fs::read_dir(&history_dir).map_err(|e| e.to_string())?.flatten() {
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "md") {
+            let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+            let size = path.metadata().map(|m| m.len()).unwrap_or(0);
+            // Convert filename timestamp (2026-02-14T04-30-00Z) to ISO (2026-02-14T04:30:00Z)
+            let parts: Vec<&str> = stem.splitn(2, 'T').collect();
+            let timestamp = if parts.len() == 2 {
+                format!("{}T{}", parts[0], parts[1].replace('-', ":"))
+            } else {
+                stem.clone()
+            };
+
+            versions.push(VersionEntry { id: stem, timestamp, size });
+        }
+    }
+
+    // Sort newest first
+    versions.sort_by(|a, b| b.id.cmp(&a.id));
+    Ok(versions)
+}
+
+#[tauri::command]
+async fn read_version(note_id: String, version_id: String, state: State<'_, AppState>) -> Result<String, String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+
+    let history_dir = get_note_history_dir(&notes_folder, &note_id);
+    let version_path = history_dir.join(format!("{}.md", version_id));
+
+    if !version_path.exists() {
+        return Err("Version not found".to_string());
+    }
+
+    std::fs::read_to_string(&version_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn restore_version(note_id: String, version_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let notes_folder = {
+        let app_config = state.app_config.read().expect("app_config read lock");
+        app_config.notes_folder.clone().ok_or("Notes folder not set")?
+    };
+
+    // Read the version content
+    let history_dir = get_note_history_dir(&notes_folder, &note_id);
+    let version_path = history_dir.join(format!("{}.md", version_id));
+    let version_content = std::fs::read_to_string(&version_path).map_err(|e| e.to_string())?;
+
+    // Snapshot current content before restoring
+    let current_path = resolve_note_path(&notes_folder, &note_id)?;
+    if current_path.exists() {
+        let current_content = std::fs::read_to_string(&current_path).unwrap_or_default();
+        // Force snapshot regardless of time
+        let _ = std::fs::create_dir_all(&history_dir);
+        let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H-%M-%SZ").to_string();
+        let snapshot_path = history_dir.join(format!("{}.md", timestamp));
+        let _ = std::fs::write(&snapshot_path, &current_content);
+    }
+
+    // Write version content to the note file
+    std::fs::write(&current_path, version_content).map_err(|e| format!("Failed to restore: {}", e))
+}
+
 // ---- Database Tauri Commands ----
 
 fn get_notes_folder_path(state: &AppState) -> Result<PathBuf, String> {
@@ -4615,6 +5635,12 @@ pub fn run() {
                 None
             };
 
+            // Auto-purge old trash and oversized version history on startup
+            if let Some(ref folder) = app_config.notes_folder {
+                purge_old_trash(folder);
+                purge_history_size(folder);
+            }
+
             // Build backlinks index on startup
             let backlinks_index = if let Some(ref folder) = app_config.notes_folder {
                 rebuild_backlinks_index_from_folder(folder)
@@ -4708,10 +5734,15 @@ pub fn run() {
             list_notes,
             list_folders,
             list_notes_in_folder,
+            create_folder,
+            rename_folder,
+            delete_folder,
+            move_note,
             read_note,
             save_note,
             delete_note,
             create_note,
+            create_note_in_folder,
             get_settings,
             update_settings,
             search_notes,
@@ -4755,6 +5786,19 @@ pub fn run() {
             list_templates,
             read_template,
             create_note_from_template,
+            export_note_markdown,
+            export_note_html,
+            export_all_zip,
+            import_notes,
+            import_zip,
+            trash_note,
+            list_trash,
+            restore_note,
+            delete_permanently,
+            empty_trash,
+            list_versions,
+            read_version,
+            restore_version,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -614,6 +614,23 @@ export function CopyIcon({ className = "w-4.5 h-4.5" }: IconProps) {
   );
 }
 
+export function ChevronRightIcon({ className = "w-4.5 h-4.5" }: IconProps) {
+  return (
+    <svg
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M9 6l6 6l-6 6" />
+    </svg>
+  );
+}
+
 export function ChevronDownIcon({ className = "w-4.5 h-4.5" }: IconProps) {
   return (
     <svg
@@ -1211,6 +1228,41 @@ export function EditIcon({ className = "w-4.5 h-4.5" }: IconProps) {
       <path stroke="none" d="M0 0h24v24H0z" fill="none" />
       <path d="M4 20h4l10.5 -10.5a1.5 1.5 0 0 0 -4 -4l-10.5 10.5v4" />
       <path d="M13.5 6.5l4 4" />
+    </svg>
+  );
+}
+
+export function ClockIcon({ className = "w-4.5 h-4.5" }: IconProps) {
+  return (
+    <svg
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  );
+}
+
+export function RotateCcwIcon({ className = "w-4.5 h-4.5" }: IconProps) {
+  return (
+    <svg
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M4.05 11a8 8 0 1 1 .5 4m-.5 5v-5h5" />
     </svg>
   );
 }

@@ -7,7 +7,11 @@ export type ColumnType =
   | "multi-select"
   | "checkbox"
   | "relation"
-  | "url";
+  | "url"
+  | "rollup";
+
+// Rollup aggregate functions
+export type RollupFunction = "count" | "sum" | "average" | "min" | "max" | "percent_checked";
 
 // Column definition in a database schema
 export interface ColumnDef {
@@ -18,10 +22,36 @@ export interface ColumnDef {
   options?: string[];
   /** For relation: target database folder name */
   target?: string;
+  /** For rollup: which relation column to aggregate through */
+  relation?: string;
+  /** For rollup: which column in the target database to aggregate */
+  target_column?: string;
+  /** For rollup: aggregation function */
+  function?: RollupFunction;
 }
 
 // View types
-export type ViewType = "table" | "board";
+export type ViewType = "table" | "board" | "calendar";
+
+// Filter operators by column type
+export type FilterOperator =
+  | "contains" | "not_contains" | "equals" | "not_equals" | "is_empty" | "is_not_empty"  // text
+  | "gt" | "lt" | "gte" | "lte"  // number
+  | "before" | "after"  // date
+  | "is" | "is_not";  // select / checkbox
+
+// A single filter condition
+export interface FilterCondition {
+  column: string;
+  operator: FilterOperator;
+  value: string;
+}
+
+// A single sort rule
+export interface SortRule {
+  column: string;
+  direction: "asc" | "desc";
+}
 
 // View definition in a database schema
 export interface ViewDef {
@@ -36,6 +66,14 @@ export interface ViewDef {
   sort_by?: string;
   /** Sort descending */
   sort_desc?: boolean;
+  /** For calendar view: which date column to use */
+  date_column?: string;
+  /** Structured filter conditions */
+  filters?: FilterCondition[];
+  /** Structured sort rules (multiple levels) */
+  sorts?: SortRule[];
+  /** Filter combination logic */
+  filter_logic?: "and" | "or";
 }
 
 // A named row template stored in the database schema
@@ -111,7 +149,6 @@ export function defaultFieldValue(colType: ColumnType): FieldValue {
     case "text":
     case "date":
     case "select":
-    case "relation":
     case "url":
       return "";
     case "number":
@@ -119,9 +156,71 @@ export function defaultFieldValue(colType: ColumnType): FieldValue {
     case "checkbox":
       return false;
     case "multi-select":
+    case "relation":
       return [];
+    case "rollup":
+      return null; // computed value, not stored
     default:
       return "";
+  }
+}
+
+// Available filter operators per column type
+export function getOperatorsForType(colType: ColumnType): { value: FilterOperator; label: string }[] {
+  const common: { value: FilterOperator; label: string }[] = [
+    { value: "is_empty", label: "Is empty" },
+    { value: "is_not_empty", label: "Is not empty" },
+  ];
+  switch (colType) {
+    case "text":
+    case "url":
+      return [
+        { value: "contains", label: "Contains" },
+        { value: "not_contains", label: "Does not contain" },
+        { value: "equals", label: "Equals" },
+        { value: "not_equals", label: "Does not equal" },
+        ...common,
+      ];
+    case "number":
+      return [
+        { value: "equals", label: "=" },
+        { value: "not_equals", label: "≠" },
+        { value: "gt", label: ">" },
+        { value: "lt", label: "<" },
+        { value: "gte", label: "≥" },
+        { value: "lte", label: "≤" },
+        ...common,
+      ];
+    case "date":
+      return [
+        { value: "equals", label: "Is" },
+        { value: "before", label: "Before" },
+        { value: "after", label: "After" },
+        ...common,
+      ];
+    case "select":
+    case "relation":
+      return [
+        { value: "is", label: "Is" },
+        { value: "is_not", label: "Is not" },
+        ...common,
+      ];
+    case "multi-select":
+      return [
+        { value: "contains", label: "Contains" },
+        { value: "not_contains", label: "Does not contain" },
+        ...common,
+      ];
+    case "checkbox":
+      return [
+        { value: "is", label: "Is" },
+        { value: "is_not", label: "Is not" },
+      ];
+    default:
+      return [
+        { value: "contains", label: "Contains" },
+        ...common,
+      ];
   }
 }
 
@@ -134,5 +233,6 @@ export const COLUMN_TYPES: { value: ColumnType; label: string }[] = [
   { value: "multi-select", label: "Multi-select" },
   { value: "checkbox", label: "Checkbox" },
   { value: "relation", label: "Relation" },
+  { value: "rollup", label: "Rollup" },
   { value: "url", label: "URL" },
 ];

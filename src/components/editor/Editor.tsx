@@ -30,12 +30,14 @@ import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
 import "katex/dist/katex.min.css";
 import { listen } from "@tauri-apps/api/event";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
 import { toast } from "sonner";
 import { mod, shift, isMac } from "../../lib/platform";
 import { parseFrontmatter, recombine, type StoryFrontmatter } from "../../lib/frontmatter";
+import { parseNoteMeta, recombineNoteMeta, type NotePageMeta } from "../../lib/noteMeta";
+import { EmojiPicker, getRandomEmoji } from "./EmojiPicker";
 import { preprocessSvg, postprocessSvg } from "../../lib/svg";
 import { preprocessCallouts, postprocessCallouts } from "../../lib/callout";
 import { postprocessEquations } from "../../lib/equation";
@@ -66,6 +68,11 @@ import {
   EditIcon,
   FolderIcon,
   LinkIcon,
+  ArrowDownToLineIcon,
+  ClockIcon,
+  RotateCcwIcon,
+  XIcon,
+  ChevronRightIcon,
 } from "../icons";
 import type { NoteMetadata } from "../../types/note";
 
@@ -920,8 +927,56 @@ const BookmarkIcon = () => (
   </svg>
 );
 
+// Toggle icon for slash menu (Lucide chevron-right in triangle)
+const ToggleIcon = () => (
+  <svg
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M9 18l6-6-6-6" />
+  </svg>
+);
+
+// Divider icon for slash menu (Lucide minus)
+const DividerIcon = () => (
+  <svg
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M5 12h14" />
+  </svg>
+);
+
+const ColumnsIcon = () => (
+  <svg
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <rect x="3" y="3" width="7" height="18" rx="1" />
+    <rect x="14" y="3" width="7" height="18" rx="1" />
+  </svg>
+);
+
 /**
- * Build custom slash menu items with the default items plus TOC, Callout, Equation, and Bookmark.
+ * Build custom slash menu items with the default items plus TOC, Callout, Equation, Bookmark, Divider, and Columns.
  */
 function getCustomSlashMenuItems(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -982,6 +1037,52 @@ function getCustomSlashMenuItems(
       subtext: "Editable table view of a database",
     },
     {
+      title: "Toggle",
+      onItemClick: () => {
+        insertOrUpdateBlockForSlashMenu(editor, { type: "toggle" as never });
+      },
+      aliases: ["toggle", "collapse", "details", "disclosure", "accordion"],
+      group: "Basic blocks",
+      icon: <ToggleIcon />,
+      subtext: "Collapsible toggle section",
+    },
+    {
+      title: "Divider",
+      onItemClick: () => {
+        insertOrUpdateBlockForSlashMenu(editor, { type: "divider" as never });
+      },
+      aliases: ["divider", "hr", "separator", "line", "horizontal rule", "---"],
+      group: "Basic blocks",
+      icon: <DividerIcon />,
+      subtext: "Horizontal line to separate content",
+    },
+    {
+      title: "2 Columns",
+      onItemClick: () => {
+        insertOrUpdateBlockForSlashMenu(editor, {
+          type: "columns" as never,
+          props: { columnData: '["",""]' } as never,
+        });
+      },
+      aliases: ["columns", "2-columns", "two columns", "side by side"],
+      group: "Basic blocks",
+      icon: <ColumnsIcon />,
+      subtext: "Two-column side-by-side layout",
+    },
+    {
+      title: "3 Columns",
+      onItemClick: () => {
+        insertOrUpdateBlockForSlashMenu(editor, {
+          type: "columns" as never,
+          props: { columnData: '["","",""]' } as never,
+        });
+      },
+      aliases: ["3-columns", "three columns"],
+      group: "Basic blocks",
+      icon: <ColumnsIcon />,
+      subtext: "Three-column layout",
+    },
+    {
       title: "Table of Contents",
       onItemClick: () => {
         insertOrUpdateBlockForSlashMenu(editor, { type: "toc" as never });
@@ -992,6 +1093,28 @@ function getCustomSlashMenuItems(
       subtext: "Auto-generated table of contents from headings",
     },
   ];
+}
+
+// Breadcrumb: shows folder path of the current note
+function Breadcrumb({ noteId }: { noteId: string }) {
+  const parts = noteId.split("/");
+  // parts = ["folder", "subfolder", "note-file"]
+  const segments = parts.slice(0, -1); // folder segments only
+
+  return (
+    <div className="flex items-center gap-0 px-4 py-1 text-xs text-text-muted/60 select-none overflow-hidden">
+      <span className="shrink-0 opacity-60">Notes</span>
+      {segments.map((seg, i) => {
+        const path = segments.slice(0, i + 1).join("/");
+        return (
+          <span key={path} className="flex items-center gap-0 min-w-0">
+            <ChevronRightIcon className="w-3 h-3 shrink-0 mx-0.5 opacity-40" />
+            <span className="truncate hover:text-text transition-colors cursor-default">{seg}</span>
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 interface EditorProps {
@@ -1027,6 +1150,16 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
   const [cmdKSelection, setCmdKSelection] = useState<{ from: number; to: number } | null>(null);
   const [storyFrontmatter, setStoryFrontmatter] = useState<StoryFrontmatter | null>(null);
   const storyFrontmatterRef = useRef<StoryFrontmatter | null>(null);
+  const [notePageMeta, setNotePageMeta] = useState<NotePageMeta | null>(null);
+  const notePageMetaRef = useRef<NotePageMeta | null>(null);
+  const [wordCount, setWordCount] = useState({ words: 0, chars: 0 });
+  const wordCountTimerRef = useRef<number | null>(null);
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [versions, setVersions] = useState<{ id: string; timestamp: string; size: number }[]>([]);
+  const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
+  const [versionContent, setVersionContent] = useState<string | null>(null);
 
   // Keep ref in sync with current note ID
   currentNoteIdRef.current = currentNote?.id ?? null;
@@ -1310,9 +1443,17 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
       try {
         // Restore SVG code blocks and callout blocks to markdown syntax
         const body = postprocessDatabaseRefs(postprocessBookmarks(postprocessEquations(postprocessCallouts(postprocessSvg(content)))));
-        // Recombine frontmatter with body if this is a story file
+        // Recombine frontmatter with body
         const fm = storyFrontmatterRef.current;
-        const fullContent = fm ? recombine(fm, body) : body;
+        const pageMeta = notePageMetaRef.current;
+        let fullContent: string;
+        if (fm) {
+          fullContent = recombine(fm, body);
+        } else if (pageMeta) {
+          fullContent = recombineNoteMeta(pageMeta, body);
+        } else {
+          fullContent = body;
+        }
         lastSaveRef.current = { noteId, content: fullContent };
         await saveNote(fullContent, noteId);
       } finally {
@@ -1364,7 +1505,172 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
   const handleEditorChange = useCallback(() => {
     if (isLoadingRef.current) return;
     scheduleSave();
-  }, [scheduleSave]);
+    // Debounced word count update
+    if (wordCountTimerRef.current) clearTimeout(wordCountTimerRef.current);
+    wordCountTimerRef.current = window.setTimeout(() => {
+      if (!editor) return;
+      try {
+        const md = editor.blocksToMarkdownLossy(editor.document);
+        // Strip markdown syntax for plain text counting
+        const plain = md
+          .replace(/^---[\s\S]*?---\n?/m, "") // frontmatter
+          .replace(/```[\s\S]*?```/g, "") // code blocks
+          .replace(/`[^`]+`/g, "") // inline code
+          .replace(/!\[.*?\]\(.*?\)/g, "") // images
+          .replace(/\[([^\]]*)\]\(.*?\)/g, "$1") // links → text
+          .replace(/[#*_~>|-]+/g, " ") // markdown symbols
+          .trim();
+        const words = plain ? plain.split(/\s+/).filter(Boolean).length : 0;
+        const chars = plain.length;
+        setWordCount({ words, chars });
+      } catch {
+        // Ignore count errors
+      }
+    }, 500);
+  }, [scheduleSave, editor]);
+
+  // Toggle page width (wide/default)
+  const toggleWide = useCallback(() => {
+    const current = notePageMetaRef.current || {};
+    const newMeta = { ...current, wide: !current.wide };
+    notePageMetaRef.current = newMeta;
+    setNotePageMeta(newMeta);
+    // Force save with updated frontmatter
+    if (editor && loadedNoteIdRef.current) {
+      const markdown = getMarkdown(editor);
+      saveImmediately(loadedNoteIdRef.current, markdown);
+    }
+  }, [editor, getMarkdown, saveImmediately]);
+
+  // Set page cover image
+  const setPageCover = useCallback((coverPath: string | undefined) => {
+    const current = notePageMetaRef.current || {};
+    const newMeta = { ...current };
+    if (coverPath) {
+      newMeta.cover = coverPath;
+      if (!newMeta.cover_position) newMeta.cover_position = 50;
+    } else {
+      delete newMeta.cover;
+      delete newMeta.cover_position;
+    }
+    notePageMetaRef.current = Object.keys(newMeta).length > 0 ? newMeta : null;
+    setNotePageMeta(Object.keys(newMeta).length > 0 ? newMeta : null);
+    if (editor && loadedNoteIdRef.current) {
+      const markdown = getMarkdown(editor);
+      saveImmediately(loadedNoteIdRef.current, markdown);
+    }
+  }, [editor, getMarkdown, saveImmediately]);
+
+  // Export note handlers
+  const handleExportMarkdown = useCallback(async () => {
+    if (!currentNote) return;
+    const title = currentNote.title.replace(/[/\\:*?"<>|]/g, "_");
+    const dest = await saveDialog({
+      defaultPath: `${title}.md`,
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+    });
+    if (!dest) return;
+    try {
+      await invoke("export_note_markdown", { id: currentNote.id, dest, includeFrontmatter: false });
+      toast.success("Exported as Markdown");
+    } catch (e) {
+      toast.error(`Export failed: ${e}`);
+    }
+  }, [currentNote]);
+
+  const handleExportHtml = useCallback(async () => {
+    if (!currentNote) return;
+    const title = currentNote.title.replace(/[/\\:*?"<>|]/g, "_");
+    const dest = await saveDialog({
+      defaultPath: `${title}.html`,
+      filters: [{ name: "HTML", extensions: ["html"] }],
+    });
+    if (!dest) return;
+    try {
+      await invoke("export_note_html", { id: currentNote.id, dest });
+      toast.success("Exported as HTML");
+    } catch (e) {
+      toast.error(`Export failed: ${e}`);
+    }
+  }, [currentNote]);
+
+  const handleExportPdf = useCallback(() => {
+    window.print();
+  }, []);
+
+  // Version history
+  const loadVersions = useCallback(async () => {
+    if (!currentNote) return;
+    try {
+      const result = await invoke<{ id: string; timestamp: string; size: number }[]>("list_versions", { noteId: currentNote.id });
+      setVersions(result);
+      setSelectedVersion(null);
+      setVersionContent(null);
+    } catch (err) {
+      console.error("Failed to load versions:", err);
+      setVersions([]);
+    }
+  }, [currentNote]);
+
+  const toggleHistory = useCallback(() => {
+    if (!historyOpen) {
+      loadVersions();
+    } else {
+      setSelectedVersion(null);
+      setVersionContent(null);
+    }
+    setHistoryOpen((v) => !v);
+  }, [historyOpen, loadVersions]);
+
+  const selectVersion = useCallback(async (versionId: string) => {
+    if (!currentNote) return;
+    setSelectedVersion(versionId);
+    try {
+      const content = await invoke<string>("read_version", { noteId: currentNote.id, versionId });
+      setVersionContent(content);
+    } catch (err) {
+      console.error("Failed to read version:", err);
+      setVersionContent(null);
+    }
+  }, [currentNote]);
+
+  const restoreVersion = useCallback(async (versionId: string) => {
+    if (!currentNote) return;
+    try {
+      await invoke("restore_version", { noteId: currentNote.id, versionId });
+      toast.success("Version restored");
+      setHistoryOpen(false);
+      setSelectedVersion(null);
+      setVersionContent(null);
+      // Reload the note
+      selectNote(currentNote.id);
+    } catch (err) {
+      toast.error("Failed to restore version");
+      console.error(err);
+    }
+  }, [currentNote, selectNote]);
+
+  // Close history when switching notes
+  useEffect(() => {
+    setHistoryOpen(false);
+    setSelectedVersion(null);
+    setVersionContent(null);
+  }, [currentNote?.id]);
+
+  // Set page icon emoji
+  const setPageIcon = useCallback((emoji: string | undefined) => {
+    const current = notePageMetaRef.current || {};
+    const newMeta = { ...current, icon: emoji };
+    if (!emoji) delete newMeta.icon;
+    notePageMetaRef.current = Object.keys(newMeta).length > 0 ? newMeta : null;
+    setNotePageMeta(Object.keys(newMeta).length > 0 ? newMeta : null);
+    setEmojiPickerOpen(false);
+    // Force save with updated frontmatter
+    if (editor && loadedNoteIdRef.current) {
+      const markdown = getMarkdown(editor);
+      saveImmediately(loadedNoteIdRef.current, markdown);
+    }
+  }, [editor, getMarkdown, saveImmediately]);
 
   // Extract body from content, stripping frontmatter and preprocessing SVG/callouts
   const extractBody = useCallback((content: string): string => {
@@ -1373,11 +1679,23 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
     if (parsed) {
       storyFrontmatterRef.current = parsed.frontmatter;
       setStoryFrontmatter(parsed.frontmatter);
+      notePageMetaRef.current = null;
+      setNotePageMeta(null);
       body = parsed.body;
     } else {
       storyFrontmatterRef.current = null;
       setStoryFrontmatter(null);
-      body = content;
+      // Check for generic note page metadata (icon, wide, cover)
+      const pageMeta = parseNoteMeta(content);
+      if (pageMeta) {
+        notePageMetaRef.current = pageMeta.meta;
+        setNotePageMeta(pageMeta.meta);
+        body = pageMeta.body;
+      } else {
+        notePageMetaRef.current = null;
+        setNotePageMeta(null);
+        body = content;
+      }
     }
     return preprocessSvg(preprocessDatabaseRefs(preprocessBookmarks(preprocessCallouts(body))));
   }, []);
@@ -1499,13 +1817,18 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
+      if (wordCountTimerRef.current) {
+        clearTimeout(wordCountTimerRef.current);
+      }
       if (needsSaveRef.current && editor) {
         needsSaveRef.current = false;
         try {
           let markdown = editor.blocksToMarkdownLossy(editor.document);
           markdown = postprocessDatabaseRefs(postprocessBookmarks(postprocessEquations(postprocessCallouts(postprocessSvg(markdown)))));
           const fm = storyFrontmatterRef.current;
-          saveNote(fm ? recombine(fm, markdown) : markdown);
+          const pageMeta = notePageMetaRef.current;
+          const full = fm ? recombine(fm, markdown) : pageMeta ? recombineNoteMeta(pageMeta, markdown) : markdown;
+          saveNote(full);
         } catch {
           // Ignore errors during cleanup
         }
@@ -1525,6 +1848,46 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
+
+  // Keyboard shortcut for Cmd+Shift+F to toggle page width
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "f") {
+        // Only handle when not in story files (which don't use notePageMeta)
+        if (storyFrontmatterRef.current) return;
+        e.preventDefault();
+        toggleWide();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [toggleWide]);
+
+  // Keyboard shortcut for Cmd+Shift+E to open export menu
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "e") {
+        if (!currentNote) return;
+        e.preventDefault();
+        setExportMenuOpen(true);
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [currentNote]);
+
+  // Keyboard shortcut for Cmd+Shift+H to toggle version history
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "h") {
+        if (!currentNote) return;
+        e.preventDefault();
+        toggleHistory();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [currentNote, toggleHistory]);
 
   // Cmd/Ctrl+K: with text selected, open note picker directly for one-step linking.
   useEffect(() => {
@@ -1909,20 +2272,216 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
+          <DropdownMenu.Root open={exportMenuOpen} onOpenChange={setExportMenuOpen}>
+            <Tooltip
+              content={`Export... (${mod}${isMac ? "" : "+"}${shift}${isMac ? "" : "+"}E)`}
+            >
+              <DropdownMenu.Trigger asChild>
+                <IconButton>
+                  <ArrowDownToLineIcon className="w-4.25 h-4.25 stroke-[1.6]" />
+                </IconButton>
+              </DropdownMenu.Trigger>
+            </Tooltip>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                className="min-w-35 bg-bg border border-border rounded-md shadow-lg py-1 z-50"
+                sideOffset={5}
+                align="end"
+                onCloseAutoFocus={(e) => e.preventDefault()}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                    e.stopPropagation();
+                  }
+                }}
+              >
+                <DropdownMenu.Item
+                  className="px-3 py-1.5 text-sm text-text cursor-pointer outline-none hover:bg-bg-muted focus:bg-bg-muted"
+                  onSelect={handleExportMarkdown}
+                >
+                  Markdown
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  className="px-3 py-1.5 text-sm text-text cursor-pointer outline-none hover:bg-bg-muted focus:bg-bg-muted"
+                  onSelect={handleExportHtml}
+                >
+                  HTML
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  className="px-3 py-1.5 text-sm text-text cursor-pointer outline-none hover:bg-bg-muted focus:bg-bg-muted"
+                  onSelect={handleExportPdf}
+                >
+                  PDF (Print)
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+
+          {/* Version History */}
+          <Tooltip content={`Version history (${mod}${isMac ? "" : "+"}${shift}${isMac ? "" : "+"}H)`}>
+            <IconButton
+              onClick={toggleHistory}
+              className={cn("h-7 w-7", historyOpen && "bg-bg-muted")}
+            >
+              <ClockIcon className="w-4 h-4" />
+            </IconButton>
+          </Tooltip>
         </div>
       </div>
+
+      {/* Breadcrumb */}
+      {currentNote.id.includes("/") && (
+        <Breadcrumb noteId={currentNote.id} />
+      )}
 
       {/* BlockNote Editor */}
       <div
         ref={scrollContainerRef}
         className="flex-1 overflow-y-auto"
       >
-        <div className="max-w-3xl mx-auto px-12 pt-4 pb-24">
+        {/* Page cover image */}
+        {!storyFrontmatter && notePageMeta?.cover && (
+          <div
+            className="page-cover group relative w-full h-48 overflow-hidden cursor-pointer"
+            style={{
+              backgroundImage: `url(${convertFileSrc(notePageMeta.cover)})`,
+              backgroundSize: "cover",
+              backgroundPosition: `center ${notePageMeta.cover_position ?? 50}%`,
+            }}
+            onMouseDown={(e) => {
+              // Drag to reposition
+              const startY = e.clientY;
+              const startPos = notePageMeta.cover_position ?? 50;
+              const handler = (ev: MouseEvent) => {
+                const delta = ((ev.clientY - startY) / 192) * 100; // 192 = cover height
+                const newPos = Math.max(0, Math.min(100, startPos + delta));
+                const current = notePageMetaRef.current || {};
+                notePageMetaRef.current = { ...current, cover_position: Math.round(newPos) };
+                setNotePageMeta({ ...current, cover_position: Math.round(newPos) });
+              };
+              const up = () => {
+                document.removeEventListener("mousemove", handler);
+                document.removeEventListener("mouseup", up);
+                // Save the new position
+                if (editor && loadedNoteIdRef.current) {
+                  const md = getMarkdown(editor);
+                  saveImmediately(loadedNoteIdRef.current, md);
+                }
+              };
+              document.addEventListener("mousemove", handler);
+              document.addEventListener("mouseup", up);
+            }}
+          >
+            <div className="absolute inset-x-0 bottom-0 flex justify-end gap-1 p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button
+                className="px-2 py-1 text-xs bg-black/50 text-white rounded hover:bg-black/70 transition-colors"
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  const path = await openDialog({
+                    multiple: false,
+                    filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+                  });
+                  if (path) {
+                    try {
+                      const assetPath = await invoke<string>("copy_image_to_assets", { sourcePath: path });
+                      setPageCover(assetPath);
+                    } catch (err) {
+                      toast.error(`Failed to copy image: ${err}`);
+                    }
+                  }
+                }}
+              >
+                Change cover
+              </button>
+              <button
+                className="px-2 py-1 text-xs bg-black/50 text-white rounded hover:bg-black/70 transition-colors"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPageCover(undefined);
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        )}
+        <div className={cn(
+          "mx-auto px-12 pt-4 pb-24 transition-[max-width] duration-300",
+          notePageMeta?.wide ? "max-w-full" : "max-w-3xl",
+        )}>
           {storyFrontmatter && (
             <StoryMetaCard
               frontmatter={storyFrontmatter}
               onChange={handleFrontmatterChange}
             />
+          )}
+          {/* Page icon + cover controls for regular notes */}
+          {!storyFrontmatter && (
+            <div className="page-icon-area group relative mb-1 flex items-center gap-2">
+              {notePageMeta?.icon ? (
+                <div className="relative inline-block">
+                  <button
+                    className="page-icon-display"
+                    onClick={() => setEmojiPickerOpen(true)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setPageIcon(undefined);
+                    }}
+                    title="Click to change, right-click to remove"
+                  >
+                    {notePageMeta.icon}
+                  </button>
+                  {emojiPickerOpen && (
+                    <div className="absolute top-full left-0 mt-1 z-50">
+                      <EmojiPicker
+                        onSelect={(emoji) => setPageIcon(emoji)}
+                        onClose={() => setEmojiPickerOpen(false)}
+                      />
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="relative inline-block">
+                  <button
+                    className="page-icon-add opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={() => {
+                      setPageIcon(getRandomEmoji());
+                      setEmojiPickerOpen(true);
+                    }}
+                  >
+                    Add icon
+                  </button>
+                  {emojiPickerOpen && (
+                    <div className="absolute top-full left-0 mt-1 z-50">
+                      <EmojiPicker
+                        onSelect={(emoji) => setPageIcon(emoji)}
+                        onClose={() => setEmojiPickerOpen(false)}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+              {!notePageMeta?.cover && (
+                <button
+                  className="page-icon-add opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={async () => {
+                    const path = await openDialog({
+                      multiple: false,
+                      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+                    });
+                    if (path) {
+                      try {
+                        const assetPath = await invoke<string>("copy_image_to_assets", { sourcePath: path });
+                        setPageCover(assetPath);
+                      } catch (err) {
+                        toast.error(`Failed to copy image: ${err}`);
+                      }
+                    }
+                  }}
+                >
+                  Add cover
+                </button>
+              )}
+            </div>
           )}
           <BlockNoteView
             editor={editor}
@@ -1991,6 +2550,92 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
             onNavigate={(noteId) => selectNote(noteId)}
           />
         </div>
+
+        {/* Version History Panel */}
+        {historyOpen && (
+          <div className="w-72 shrink-0 border-l border-border bg-bg-secondary flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+              <span className="text-xs font-medium text-text">Version History</span>
+              <IconButton onClick={() => setHistoryOpen(false)} className="h-5 w-5">
+                <XIcon className="w-3 h-3" />
+              </IconButton>
+            </div>
+            {versions.length === 0 ? (
+              <div className="flex-1 flex items-center justify-center text-xs text-text-muted p-4 text-center">
+                No versions yet. Versions are saved automatically as you edit.
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto">
+                {versions.map((v) => {
+                  const date = new Date(v.timestamp);
+                  const isSelected = selectedVersion === v.id;
+                  return (
+                    <div
+                      key={v.id}
+                      className={cn(
+                        "px-3 py-2 border-b border-border cursor-pointer transition-colors",
+                        isSelected ? "bg-bg-muted" : "hover:bg-bg-muted/50"
+                      )}
+                      onClick={() => selectVersion(v.id)}
+                    >
+                      <div className="text-xs font-medium text-text">
+                        {date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                        {" "}
+                        {date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                      </div>
+                      <div className="text-2xs text-text-muted mt-0.5">
+                        {v.size < 1024 ? `${v.size} B` : `${(v.size / 1024).toFixed(1)} KB`}
+                      </div>
+                      {isSelected && (
+                        <button
+                          className="mt-1.5 flex items-center gap-1 text-2xs text-accent hover:underline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            restoreVersion(v.id);
+                          }}
+                        >
+                          <RotateCcwIcon className="w-3 h-3" />
+                          Restore this version
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {selectedVersion && versionContent !== null && (
+              <div className="border-t border-border max-h-48 overflow-y-auto">
+                <div className="px-3 py-1.5 text-2xs font-medium text-text-muted bg-bg">Preview</div>
+                <pre className="px-3 py-2 text-2xs text-text whitespace-pre-wrap font-mono leading-relaxed">
+                  {versionContent.slice(0, 2000)}
+                  {versionContent.length > 2000 && "…"}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Word count footer */}
+      <div className="h-6 shrink-0 flex items-center justify-end px-4 border-t border-border text-2xs text-text-muted gap-3 select-none">
+        <span>{wordCount.words} words</span>
+        <span>{wordCount.chars} characters</span>
+        <span>{Math.max(1, Math.ceil(wordCount.words / 200))} min read</span>
+        {!storyFrontmatter && (
+          <Tooltip content={`Toggle wide layout (${mod}${isMac ? "" : "+"}${shift}${isMac ? "" : "+"}F)`}>
+            <button
+              onClick={toggleWide}
+              className={cn(
+                "px-1.5 py-0.5 rounded text-2xs transition-colors",
+                notePageMeta?.wide
+                  ? "bg-accent text-text-inverse"
+                  : "hover:bg-bg-muted"
+              )}
+            >
+              {notePageMeta?.wide ? "Wide" : "Narrow"}
+            </button>
+          </Tooltip>
+        )}
       </div>
 
       {/* Link Hover Menu */}

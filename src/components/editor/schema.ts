@@ -10,6 +10,9 @@ import { EquationBlock } from "./EquationBlock";
 import { InlineEquation } from "./InlineEquation";
 import { BookmarkBlock } from "./BookmarkBlock";
 import { DatabaseTableBlock } from "./DatabaseTable";
+import { DividerBlock } from "./DividerBlock";
+import { ToggleBlock } from "./ToggleBlock";
+import { ColumnsBlock } from "./ColumnsBlock";
 
 /**
  * Shared BlockNote schema that combines:
@@ -27,6 +30,9 @@ export const schema = BlockNoteSchema.create({
     equation: EquationBlock(),
     bookmark: BookmarkBlock(),
     databaseTable: DatabaseTableBlock(),
+    divider: DividerBlock(),
+    toggle: ToggleBlock(),
+    columns: ColumnsBlock(),
   },
   inlineContentSpecs: {
     ...defaultInlineContentSpecs,

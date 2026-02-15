@@ -29,6 +29,10 @@ export async function createNote(): Promise<Note> {
   return invoke("create_note");
 }
 
+export async function createNoteInFolder(folder: string): Promise<Note> {
+  return invoke("create_note_in_folder", { folder });
+}
+
 export async function duplicateNote(id: string): Promise<Note> {
   // Read the original note, then create a new one with the same content
   const original = await readNote(id);
@@ -74,4 +78,20 @@ export async function getBacklinks(noteTitle: string): Promise<BacklinkEntry[]> 
 
 export async function rebuildBacklinks(): Promise<void> {
   return invoke("rebuild_backlinks");
+}
+
+export async function createFolder(folderPath: string): Promise<string> {
+  return invoke("create_folder", { folderPath });
+}
+
+export async function renameFolder(oldPath: string, newName: string): Promise<string> {
+  return invoke("rename_folder", { oldPath, newName });
+}
+
+export async function deleteFolder(folderPath: string): Promise<void> {
+  return invoke("delete_folder", { folderPath });
+}
+
+export async function moveNote(id: string, destination: string): Promise<Note> {
+  return invoke("move_note", { id, destination });
 }

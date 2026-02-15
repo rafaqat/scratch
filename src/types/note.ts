@@ -3,6 +3,7 @@ export interface NoteMetadata {
   title: string;
   preview: string;
   modified: number;
+  icon?: string;
 }
 
 export interface Note {

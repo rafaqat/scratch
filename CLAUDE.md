@@ -1,5 +1,28 @@
 # Scratch - Development Guide
 
+## Story & Roadmap Tracking (MANDATORY)
+
+**CRITICAL:** When implementing stories from `product/E-*/stories/`, you MUST use the `/story` skill to track progress. Never implement story work without updating the story files.
+
+### Workflow for Every Story
+
+1. **Before coding:** Run `/story S-XXXX-XX` to claim the story (sets status to "In Progress", logs started_at)
+2. **During implementation:** Check off acceptance criteria `- [x]` in the story file as you complete them
+3. **After commits:** Log commit hashes to the story frontmatter and Activity Log
+4. **When done:** Mark the story "Done" with completed_at date and Results section
+5. **Always:** Update the epic README.md changelog and feature status tables
+
+### When Implementing Multiple Stories
+
+Even when doing bulk implementation, claim and complete stories ONE AT A TIME through the `/story` skill. Do not use `TaskCreate` as a substitute — that's ephemeral and session-only. The `product/` folder is the source of truth.
+
+### Quick Reference
+
+- `/roadmap` — Show board with story statuses
+- `/roadmap next` — Find highest-priority unblocked story
+- `/story S-XXXX-XX` — Claim and work on a specific story
+- `/roadmap progress` — Show completion stats
+
 ## Project Overview
 
 Scratch is a cross-platform markdown note-taking app for macOS and Windows, built with Tauri v2 (Rust backend) + React/TypeScript/Tailwind (frontend) + BlockNote (block-based editor) + Tantivy (full-text search).

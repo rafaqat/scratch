@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { useNotes } from "../../context/NotesContext";
 import { useTheme } from "../../context/ThemeContext";
@@ -15,6 +16,8 @@ import {
   ExternalLinkIcon,
   SpinnerIcon,
   CloudPlusIcon,
+  ArrowDownToLineIcon,
+  UploadIcon,
 } from "../icons";
 
 // Format remote URL for display - extract user/repo from full URL
@@ -64,6 +67,8 @@ export function GeneralSettingsSection() {
   const [showRemoteInput, setShowRemoteInput] = useState(false);
   const [appVersion, setAppVersion] = useState<string>("");
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
 
   useEffect(() => {
     getVersion()
@@ -149,6 +154,65 @@ export function GeneralSettingsSection() {
     setShowRemoteInput(false);
     setRemoteUrl("");
     clearError();
+  };
+
+  const handleExportAll = async () => {
+    setIsExporting(true);
+    try {
+      const dest = await saveDialog({
+        defaultPath: "notes-export.zip",
+        filters: [{ name: "Zip Archive", extensions: ["zip"] }],
+      });
+      if (!dest) {
+        setIsExporting(false);
+        return;
+      }
+      const count = await invoke<number>("export_all_zip", { dest });
+      toast.success(`Exported ${count} notes as zip`);
+    } catch (e) {
+      toast.error(`Export failed: ${e}`);
+    }
+    setIsExporting(false);
+  };
+
+  const handleImportFiles = async () => {
+    setIsImporting(true);
+    try {
+      const paths = await openDialog({
+        multiple: true,
+        filters: [{ name: "Notes", extensions: ["md", "txt", "html", "htm"] }],
+      });
+      if (!paths || (Array.isArray(paths) && paths.length === 0)) {
+        setIsImporting(false);
+        return;
+      }
+      const pathList = Array.isArray(paths) ? paths : [paths];
+      const count = await invoke<number>("import_notes", { paths: pathList });
+      toast.success(`Imported ${count} note${count === 1 ? "" : "s"}`);
+    } catch (e) {
+      toast.error(`Import failed: ${e}`);
+    }
+    setIsImporting(false);
+  };
+
+  const handleImportZip = async () => {
+    setIsImporting(true);
+    try {
+      const path = await openDialog({
+        multiple: false,
+        filters: [{ name: "Zip Archive", extensions: ["zip"] }],
+      });
+      if (!path) {
+        setIsImporting(false);
+        return;
+      }
+      const pathStr = Array.isArray(path) ? path[0] : path;
+      const count = await invoke<number>("import_zip", { path: pathStr });
+      toast.success(`Imported ${count} note${count === 1 ? "" : "s"} from zip`);
+    } catch (e) {
+      toast.error(`Import failed: ${e}`);
+    }
+    setIsImporting(false);
   };
 
   return (
@@ -444,6 +508,87 @@ export function GeneralSettingsSection() {
             </div>
           </>
         )}
+      </section>
+
+      {/* Divider */}
+      <div className="border-t border-border border-dashed" />
+
+      {/* Import & Export */}
+      <section>
+        <h2 className="text-xl font-medium mb-0.5">Import & Export</h2>
+        <p className="text-sm text-text-muted mb-4">
+          Import notes from other apps or export your notes for backup
+        </p>
+
+        <div className="space-y-3">
+          {/* Export */}
+          <div>
+            <h3 className="text-sm font-medium mb-2">Export</h3>
+            <Button
+              onClick={handleExportAll}
+              disabled={isExporting}
+              variant="outline"
+              size="md"
+              className="gap-1.25"
+            >
+              {isExporting ? (
+                <>
+                  <SpinnerIcon className="w-4.5 h-4.5 stroke-[1.5] animate-spin" />
+                  Exporting...
+                </>
+              ) : (
+                <>
+                  <ArrowDownToLineIcon className="w-4.5 h-4.5 stroke-[1.5]" />
+                  Export All as Zip
+                </>
+              )}
+            </Button>
+            <p className="text-xs text-text-muted mt-1.5">
+              Export all notes as a zip archive of markdown files
+            </p>
+          </div>
+
+          <div className="border-t border-border border-dashed" />
+
+          {/* Import */}
+          <div>
+            <h3 className="text-sm font-medium mb-2">Import</h3>
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={handleImportFiles}
+                disabled={isImporting}
+                variant="outline"
+                size="md"
+                className="gap-1.25"
+              >
+                {isImporting ? (
+                  <>
+                    <SpinnerIcon className="w-4.5 h-4.5 stroke-[1.5] animate-spin" />
+                    Importing...
+                  </>
+                ) : (
+                  <>
+                    <UploadIcon className="w-4.5 h-4.5 stroke-[1.5]" />
+                    Import Files
+                  </>
+                )}
+              </Button>
+              <Button
+                onClick={handleImportZip}
+                disabled={isImporting}
+                variant="outline"
+                size="md"
+                className="gap-1.25"
+              >
+                <UploadIcon className="w-4.5 h-4.5 stroke-[1.5]" />
+                Import from Zip
+              </Button>
+            </div>
+            <p className="text-xs text-text-muted mt-1.5">
+              Import .md, .txt, or .html files. Zip import supports Notion exports.
+            </p>
+          </div>
+        </div>
       </section>
 
       {/* Divider */}

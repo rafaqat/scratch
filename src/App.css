@@ -1419,6 +1419,238 @@ html.dark {
   background: var(--color-bg-emphasis);
 }
 
+/* Database toolbar */
+.db-toolbar {
+  position: relative;
+  padding: 4px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.db-toolbar-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.db-toolbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.db-toolbar-btn:hover {
+  background: var(--color-bg-muted);
+  color: var(--color-text);
+}
+
+.db-toolbar-btn-active {
+  color: var(--color-accent);
+  background: var(--color-bg-muted);
+  border-color: var(--color-accent);
+}
+
+.db-toolbar-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.db-toolbar-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  font-size: 11px;
+  color: var(--color-text);
+  background: var(--color-bg-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.db-toolbar-pill-sort {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+}
+
+.db-toolbar-pill-remove {
+  background: none;
+  border: none;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.db-toolbar-pill-remove:hover {
+  color: var(--color-text);
+}
+
+.db-toolbar-clear {
+  background: none;
+  border: none;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 1px 4px;
+  text-decoration: underline;
+}
+
+.db-toolbar-clear:hover {
+  color: var(--color-text);
+}
+
+/* Filter builder popover */
+.db-filter-builder,
+.db-sort-builder {
+  position: absolute;
+  top: 100%;
+  left: 12px;
+  z-index: 50;
+  min-width: 380px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 8px;
+  margin-top: 2px;
+}
+
+.dark .db-filter-builder,
+.dark .db-sort-builder {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.db-filter-builder-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.db-filter-builder-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.db-filter-builder-close {
+  background: none;
+  border: none;
+  font-size: 16px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.db-filter-builder-close:hover {
+  color: var(--color-text);
+}
+
+.db-filter-logic {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.db-filter-logic-select {
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+
+.db-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.db-filter-select {
+  font-size: 12px;
+  padding: 4px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  min-width: 80px;
+}
+
+.db-filter-input {
+  font-size: 12px;
+  padding: 4px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  flex: 1;
+  min-width: 80px;
+}
+
+.db-filter-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.db-filter-value {
+  flex: 1;
+}
+
+.db-filter-remove {
+  background: none;
+  border: none;
+  font-size: 14px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  line-height: 1;
+  border-radius: 3px;
+}
+
+.db-filter-remove:hover {
+  color: var(--color-text);
+  background: var(--color-bg-muted);
+}
+
+.db-filter-add {
+  font-size: 12px;
+  color: var(--color-accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.db-filter-add:hover {
+  text-decoration: underline;
+}
+
+.db-sort-then {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
 /* Add column popover */
 .db-table-add-col-popover {
   position: absolute;
@@ -1780,6 +2012,351 @@ html.dark {
   color: #dc2626;
 }
 
+/* ============================================
+   Toggle Block (collapsible disclosure)
+   ============================================ */
+
+.toggle-block {
+  margin: 4px 0;
+}
+
+.toggle-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.toggle-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  padding: 0;
+  margin-top: 2px;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.toggle-chevron:hover {
+  background: var(--color-bg-muted);
+  color: var(--color-text);
+}
+
+.toggle-chevron-icon {
+  transition: transform 0.15s ease;
+}
+
+.toggle-chevron-open {
+  transform: rotate(90deg);
+}
+
+.toggle-content {
+  flex: 1;
+  min-width: 0;
+}
+
+/* When collapsed, hide child blocks.
+   BlockNote renders: blockContainer > [contentType wrapper, blockGroup].
+   We bubble the state up via JS to the blockContainer parent. */
+[data-node-type="blockContainer"]:has(.toggle-collapsed) > [data-node-type="blockGroup"] {
+  display: none;
+}
+
+/* ============================================
+   Divider Block
+   ============================================ */
+
+.divider-block {
+  margin: 8px 0;
+  padding: 8px 0;
+  user-select: none;
+}
+
+.divider-block hr {
+  border: none;
+  border-top: 1px solid var(--color-border-solid);
+  margin: 0;
+}
+
+/* ============================================
+   Columns Block
+   ============================================ */
+
+.columns-block {
+  margin: 8px 0;
+  padding: 4px 0;
+  user-select: none;
+}
+
+.columns-grid {
+  min-height: 48px;
+}
+
+.column-cell {
+  position: relative;
+  min-height: 40px;
+}
+
+.column-content {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  outline: none;
+  font-size: 0.9em;
+  line-height: 1.5;
+  transition: border-color 0.15s;
+  user-select: text;
+  cursor: text;
+  word-break: break-word;
+}
+
+.column-content:focus {
+  border-color: var(--color-accent);
+}
+
+.column-content:empty::before {
+  content: attr(data-placeholder);
+  color: var(--color-text-muted);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.column-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-bg-muted);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.column-cell:hover .column-remove {
+  opacity: 1;
+}
+
+.column-remove:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -8px;
+  width: 16px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+}
+
+.column-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 24px;
+  border-radius: 2px;
+  background: var(--color-border);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.column-resize-handle:hover::after,
+.column-resize-handle:active::after {
+  opacity: 1;
+}
+
+.columns-controls {
+  margin-top: 4px;
+}
+
+.columns-add-btn {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.columns-block:hover .columns-add-btn {
+  opacity: 1;
+}
+
+.columns-add-btn:hover {
+  background: var(--color-bg-muted);
+  color: var(--color-text);
+}
+
+/* Responsive: collapse to single column on narrow viewport */
+@media (max-width: 640px) {
+  .columns-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* ============================================
+   Page Icon
+   ============================================ */
+
+.page-icon-area {
+  padding-top: 8px;
+  min-height: 32px;
+}
+
+.page-icon-display {
+  font-size: 2.5rem;
+  line-height: 1;
+  padding: 4px 6px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.page-icon-display:hover {
+  background: var(--color-bg-muted);
+}
+
+.page-icon-add {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.page-icon-add:hover {
+  background: var(--color-bg-muted);
+  color: var(--color-text);
+}
+
+/* ============================================
+   Emoji Picker (Page Icon)
+   ============================================ */
+
+.emoji-picker {
+  width: 320px;
+  max-height: 360px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  z-index: 100;
+}
+
+.dark .emoji-picker {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.emoji-picker-search {
+  padding: 8px 12px;
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text);
+  font-size: 0.85rem;
+  outline: none;
+}
+
+.emoji-picker-search::placeholder {
+  color: var(--color-text-muted);
+}
+
+.emoji-picker-categories {
+  display: flex;
+  gap: 0;
+  padding: 4px 4px 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-border);
+  scrollbar-width: none;
+}
+
+.emoji-picker-categories::-webkit-scrollbar {
+  display: none;
+}
+
+.emoji-picker-cat-btn {
+  padding: 4px 8px;
+  border: none;
+  background: transparent;
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  transition: color 0.1s ease, border-color 0.1s ease;
+}
+
+.emoji-picker-cat-btn:hover {
+  color: var(--color-text);
+}
+
+.emoji-picker-cat-btn.active {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent);
+}
+
+.emoji-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+  padding: 8px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.emoji-picker-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1.3em;
+  transition: background 0.1s ease;
+}
+
+.emoji-picker-item:hover {
+  background: var(--color-bg-muted);
+}
+
 /* Standard links in editor */
 .bn-editor a {
   color: #2563eb;
@@ -1801,4 +2378,369 @@ html.dark {
 
 .dark .bn-editor a:hover {
   background: rgba(96, 165, 250, 0.2);
+}
+
+/* ---- Database Relation & Rollup ---- */
+
+.db-relation-picker {
+  position: absolute;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: 220px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 6px;
+}
+
+.dark .db-relation-picker {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.db-relation-search {
+  width: 100%;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  outline: none;
+  margin-bottom: 4px;
+}
+
+.db-relation-search:focus {
+  border-color: var(--color-accent);
+}
+
+.db-relation-list {
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.db-relation-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  font-size: 12px;
+  color: var(--color-text);
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.db-relation-option:hover {
+  background: var(--color-bg-muted);
+}
+
+.db-relation-empty {
+  padding: 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.db-relation-done {
+  width: 100%;
+  margin-top: 4px;
+  padding: 4px;
+  font-size: 12px;
+  color: var(--color-accent);
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.db-relation-done:hover {
+  background: var(--color-bg-muted);
+}
+
+.db-relation-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.db-relation-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 11px;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent);
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.db-relation-tag:hover {
+  background: color-mix(in srgb, var(--color-accent) 20%, transparent);
+}
+
+.db-rollup-cell {
+  cursor: default !important;
+}
+
+.db-rollup-value {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Database View Switcher ---- */
+
+.db-view-switcher {
+  display: flex;
+  gap: 2px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+}
+
+.db-view-switcher-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.db-view-switcher-btn:hover {
+  background: var(--color-bg-muted);
+  color: var(--color-text);
+}
+
+.db-view-switcher-btn-active {
+  color: var(--color-text);
+  background: var(--color-bg);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+}
+
+/* ---- Database Calendar View ---- */
+
+.db-calendar {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 8px 0;
+  user-select: none;
+}
+
+.db-calendar-loading,
+.db-calendar-error,
+.db-calendar-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.db-calendar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+}
+
+.db-calendar-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.db-calendar-nav-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.db-calendar-nav-btn:hover {
+  background: var(--color-bg-muted);
+}
+
+.db-calendar-month {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  min-width: 150px;
+  text-align: center;
+}
+
+.db-calendar-today-btn {
+  font-size: 12px;
+  padding: 3px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.db-calendar-today-btn:hover {
+  background: var(--color-bg-muted);
+  color: var(--color-text);
+}
+
+.db-calendar-col-select {
+  font-size: 12px;
+  padding: 3px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+
+.db-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+
+.db-calendar-weekdays {
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+}
+
+.db-calendar-weekday {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.db-calendar-day {
+  min-height: 80px;
+  border-right: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  padding: 2px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.db-calendar-day:nth-child(7n) {
+  border-right: none;
+}
+
+.db-calendar-day:hover {
+  background: var(--color-bg-muted);
+}
+
+.db-calendar-day-outside {
+  background: var(--color-bg-secondary);
+  cursor: default;
+}
+
+.db-calendar-day-outside:hover {
+  background: var(--color-bg-secondary);
+}
+
+.db-calendar-day-today {
+  background: color-mix(in srgb, var(--color-accent) 5%, transparent);
+}
+
+.db-calendar-day-drop {
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent) !important;
+}
+
+.db-calendar-day-num {
+  display: inline-block;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  padding: 2px 4px;
+  line-height: 1;
+}
+
+.db-calendar-day-num-today {
+  color: var(--color-text-inverse);
+  background: var(--color-accent);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+}
+
+.db-calendar-day-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 2px;
+}
+
+.db-calendar-row-card {
+  padding: 2px 4px;
+  font-size: 11px;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  cursor: grab;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-calendar-row-card:hover {
+  background: var(--color-bg-muted);
+  border-color: var(--color-accent);
+}
+
+.db-calendar-row-card:active {
+  cursor: grabbing;
+}
+
+.db-calendar-row-title {
+  pointer-events: none;
+}
+
+.db-calendar-row-edit {
+  width: 100%;
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  color: var(--color-text);
+  outline: none;
+  padding: 0;
+}
+
+.db-calendar-nodate {
+  padding: 8px 12px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+}
+
+.db-calendar-nodate-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.db-calendar-nodate-rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
 }

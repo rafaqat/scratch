@@ -13,16 +13,35 @@ import {
   AlertDialogTitle,
 } from "../ui";
 import { cn, cleanTitle } from "../../lib/utils";
-import { ChevronDownIcon, FolderIcon } from "../icons";
+import { ChevronDownIcon, FolderIcon, PinIcon } from "../icons";
 import * as notesService from "../../services/notes";
 import type { Settings } from "../../types/note";
 import type { NoteMetadata } from "../../types/note";
+
+// Drag data type key
+const DRAG_NOTE_TYPE = "application/x-scratch-note-id";
+
+// Persistence key for expanded folders
+const EXPANDED_FOLDERS_KEY = "scratch-expanded-folders";
+
+function loadExpandedFolders(): Set<string> {
+  try {
+    const stored = localStorage.getItem(EXPANDED_FOLDERS_KEY);
+    if (stored) return new Set(JSON.parse(stored));
+  } catch { /* ignore */ }
+  return new Set<string>();
+}
+
+function saveExpandedFolders(folders: Set<string>) {
+  try {
+    localStorage.setItem(EXPANDED_FOLDERS_KEY, JSON.stringify([...folders]));
+  } catch { /* ignore */ }
+}
 
 function formatDate(timestamp: number): string {
   const date = new Date(timestamp * 1000);
   const now = new Date();
 
-  // Get start of today, yesterday, etc. (midnight local time)
   const startOfToday = new Date(
     now.getFullYear(),
     now.getMonth(),
@@ -30,36 +49,31 @@ function formatDate(timestamp: number): string {
   );
   const startOfYesterday = new Date(startOfToday.getTime() - 86400000);
 
-  // Today: show time
   if (date >= startOfToday) {
     return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   }
-
-  // Yesterday
   if (date >= startOfYesterday) {
     return "Yesterday";
   }
-
-  // Calculate days ago
   const daysAgo =
     Math.floor((startOfToday.getTime() - date.getTime()) / 86400000) + 1;
-
-  // 2-6 days ago: show "X days ago"
   if (daysAgo <= 6) {
     return `${daysAgo} days ago`;
   }
-
-  // This year: show month and day
   if (date.getFullYear() === now.getFullYear()) {
     return date.toLocaleDateString([], { month: "short", day: "numeric" });
   }
-
-  // Different year: show full date
   return date.toLocaleDateString([], {
     month: "short",
     day: "numeric",
     year: "numeric",
   });
+}
+
+// Get the folder portion of a note ID (or "." for root)
+function noteFolderPath(noteId: string): string {
+  const idx = noteId.lastIndexOf("/");
+  return idx >= 0 ? noteId.slice(0, idx) : ".";
 }
 
 // --- Tree data structure ---
@@ -82,7 +96,6 @@ function buildTree(items: Array<NoteMetadata & { preview?: string }>): TreeNode[
   const root: TreeNode[] = [];
   const folderMap = new Map<string, FolderNode>();
 
-  // Helper to get or create a folder node
   function getFolder(path: string): FolderNode {
     if (folderMap.has(path)) return folderMap.get(path)!;
 
@@ -94,12 +107,10 @@ function buildTree(items: Array<NoteMetadata & { preview?: string }>): TreeNode[
     if (parts.length > 1) {
       const parentPath = parts.slice(0, -1).join("/");
       const parent = getFolder(parentPath);
-      // Only add if not already a child
       if (!parent.children.some((c) => c.type === "folder" && (c as FolderNode).path === path)) {
         parent.children.push(folder);
       }
     } else {
-      // Top-level folder
       if (!root.some((c) => c.type === "folder" && (c as FolderNode).path === path)) {
         root.push(folder);
       }
@@ -111,17 +122,14 @@ function buildTree(items: Array<NoteMetadata & { preview?: string }>): TreeNode[
   for (const item of items) {
     const parts = item.id.split("/");
     if (parts.length > 1) {
-      // Has folder path
       const folderPath = parts.slice(0, -1).join("/");
       const folder = getFolder(folderPath);
       folder.children.push({ type: "note", note: item });
     } else {
-      // Root-level note
       root.push({ type: "note", note: item });
     }
   }
 
-  // Sort: folders first (alphabetical), then notes by modified desc
   function sortChildren(nodes: TreeNode[]): TreeNode[] {
     const folders = nodes.filter((n): n is FolderNode => n.type === "folder");
     const notes = nodes.filter((n): n is NoteNode => n.type === "note");
@@ -129,7 +137,6 @@ function buildTree(items: Array<NoteMetadata & { preview?: string }>): TreeNode[
     folders.sort((a, b) => a.name.localeCompare(b.name));
     notes.sort((a, b) => b.note.modified - a.note.modified);
 
-    // Recursively sort folder children
     for (const folder of folders) {
       folder.children = sortChildren(folder.children);
     }
@@ -150,6 +157,7 @@ interface NoteItemProps {
   isSelected: boolean;
   isPinned: boolean;
   depth: number;
+  icon?: string;
   onSelect: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, id: string) => void;
 }
@@ -162,6 +170,7 @@ const NoteItem = memo(function NoteItem({
   isSelected,
   isPinned,
   depth,
+  icon,
   onSelect,
   onContextMenu,
 }: NoteItemProps) {
@@ -171,10 +180,19 @@ const NoteItem = memo(function NoteItem({
     [onContextMenu, id]
   );
 
+  const displayTitle = icon ? `${icon} ${cleanTitle(title)}` : cleanTitle(title);
+
   return (
-    <div style={{ paddingLeft: depth * 12 }}>
+    <div
+      style={{ paddingLeft: depth * 12 }}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData(DRAG_NOTE_TYPE, id);
+        e.dataTransfer.effectAllowed = "move";
+      }}
+    >
       <ListItem
-        title={cleanTitle(title)}
+        title={displayTitle}
         subtitle={preview}
         meta={formatDate(modified)}
         isSelected={isSelected}
@@ -194,7 +212,14 @@ interface FolderItemProps {
   selectedNoteId: string | null;
   pinnedIds: Set<string>;
   onSelect: (id: string) => void;
-  onContextMenu: (e: React.MouseEvent, id: string) => void;
+  onNoteContextMenu: (e: React.MouseEvent, id: string) => void;
+  onFolderContextMenu: (e: React.MouseEvent, folderPath: string) => void;
+  onDrop: (noteId: string, targetFolder: string) => void;
+  renamingFolder: string | null;
+  renamingValue: string;
+  onRenamingChange: (value: string) => void;
+  onRenamingSubmit: () => void;
+  onRenamingCancel: () => void;
 }
 
 const FolderItem = memo(function FolderItem({
@@ -205,19 +230,49 @@ const FolderItem = memo(function FolderItem({
   selectedNoteId,
   pinnedIds,
   onSelect,
-  onContextMenu,
+  onNoteContextMenu,
+  onFolderContextMenu,
+  onDrop,
+  renamingFolder,
+  renamingValue,
+  onRenamingChange,
+  onRenamingSubmit,
+  onRenamingCancel,
 }: FolderItemProps) {
   const isExpanded = expanded.has(folder.path);
   const noteCount = countNotes(folder);
+  const isRenaming = renamingFolder === folder.path;
+  const [isDragOver, setIsDragOver] = useState(false);
 
   return (
     <div>
       <button
         onClick={() => toggleFolder(folder.path)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          onFolderContextMenu(e, folder.path);
+        }}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes(DRAG_NOTE_TYPE)) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            setIsDragOver(true);
+          }
+        }}
+        onDragLeave={() => setIsDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDragOver(false);
+          const noteId = e.dataTransfer.getData(DRAG_NOTE_TYPE);
+          if (noteId) {
+            onDrop(noteId, folder.path);
+          }
+        }}
         className={cn(
           "w-full flex items-center gap-1 px-2.5 py-1.5 text-sm rounded-md",
           "hover:bg-bg-muted transition-colors cursor-pointer select-none",
-          "text-text-muted hover:text-text"
+          "text-text-muted hover:text-text",
+          isDragOver && "bg-accent/15 ring-1 ring-accent/40"
         )}
         style={{ paddingLeft: depth * 12 + 10 }}
       >
@@ -228,7 +283,23 @@ const FolderItem = memo(function FolderItem({
           )}
         />
         <FolderIcon className="w-3.5 h-3.5 stroke-[1.5] shrink-0 opacity-60" />
-        <span className="truncate font-medium text-xs">{folder.name}</span>
+        {isRenaming ? (
+          <input
+            className="flex-1 min-w-0 text-xs font-medium bg-bg-surface border border-border rounded px-1 py-0 outline-none"
+            value={renamingValue}
+            onChange={(e) => onRenamingChange(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") onRenamingSubmit();
+              if (e.key === "Escape") onRenamingCancel();
+            }}
+            onBlur={onRenamingSubmit}
+            onClick={(e) => e.stopPropagation()}
+            autoFocus
+          />
+        ) : (
+          <span className="truncate font-medium text-xs">{folder.name}</span>
+        )}
         <span className="text-2xs text-text-muted/50 ml-auto shrink-0">{noteCount}</span>
       </button>
       {isExpanded && (
@@ -244,7 +315,14 @@ const FolderItem = memo(function FolderItem({
                 selectedNoteId={selectedNoteId}
                 pinnedIds={pinnedIds}
                 onSelect={onSelect}
-                onContextMenu={onContextMenu}
+                onNoteContextMenu={onNoteContextMenu}
+                onFolderContextMenu={onFolderContextMenu}
+                onDrop={onDrop}
+                renamingFolder={renamingFolder}
+                renamingValue={renamingValue}
+                onRenamingChange={onRenamingChange}
+                onRenamingSubmit={onRenamingSubmit}
+                onRenamingCancel={onRenamingCancel}
               />
             ) : (
               <NoteItem
@@ -256,8 +334,9 @@ const FolderItem = memo(function FolderItem({
                 isSelected={selectedNoteId === (child as NoteNode).note.id}
                 isPinned={pinnedIds.has((child as NoteNode).note.id)}
                 depth={depth + 1}
+                icon={(child as NoteNode).note.icon}
                 onSelect={onSelect}
-                onContextMenu={onContextMenu}
+                onContextMenu={onNoteContextMenu}
               />
             )
           )}
@@ -276,6 +355,53 @@ function countNotes(folder: FolderNode): number {
   return count;
 }
 
+// --- Pinned Notes Section ---
+
+function PinnedSection({
+  notes,
+  pinnedIds,
+  selectedNoteId,
+  onSelect,
+  onContextMenu,
+}: {
+  notes: Array<NoteMetadata & { preview?: string }>;
+  pinnedIds: Set<string>;
+  selectedNoteId: string | null;
+  onSelect: (id: string) => void;
+  onContextMenu: (e: React.MouseEvent, id: string) => void;
+}) {
+  const pinnedNotes = useMemo(
+    () => notes.filter((n) => pinnedIds.has(n.id)),
+    [notes, pinnedIds]
+  );
+
+  if (pinnedNotes.length === 0) return null;
+
+  return (
+    <div className="mb-1">
+      <div className="flex items-center gap-1 px-3 py-1 text-2xs font-medium text-text-muted/50 uppercase tracking-wider select-none">
+        <PinIcon className="w-3 h-3 stroke-[1.5] opacity-50" />
+        Pinned
+      </div>
+      {pinnedNotes.map((item) => (
+        <NoteItem
+          key={item.id}
+          id={item.id}
+          title={item.title}
+          preview={item.preview}
+          modified={item.modified}
+          isSelected={selectedNoteId === item.id}
+          isPinned={true}
+          depth={0}
+          icon={item.icon}
+          onSelect={onSelect}
+          onContextMenu={onContextMenu}
+        />
+      ))}
+    </div>
+  );
+}
+
 // --- Main component ---
 
 export function NoteList() {
@@ -290,12 +416,18 @@ export function NoteList() {
     isLoading,
     searchQuery,
     searchResults,
+    refreshNotes,
   } = useNotes();
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [noteToDelete, setNoteToDelete] = useState<string | null>(null);
+  const [deleteFolderDialogOpen, setDeleteFolderDialogOpen] = useState(false);
+  const [folderToDelete, setFolderToDelete] = useState<string | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(loadExpandedFolders);
+  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
+  const [renamingValue, setRenamingValue] = useState("");
+  const [rootDragOver, setRootDragOver] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Load settings when notes change
@@ -330,7 +462,11 @@ export function NoteList() {
     }
   }, [selectedNoteId]);
 
-  // Calculate pinned IDs set for efficient lookup
+  // Persist expanded folders to localStorage
+  useEffect(() => {
+    saveExpandedFolders(expandedFolders);
+  }, [expandedFolders]);
+
   const pinnedIds = useMemo(
     () => new Set(settings?.pinnedNoteIds || []),
     [settings]
@@ -360,7 +496,38 @@ export function NoteList() {
     }
   }, [noteToDelete, deleteNote]);
 
-  const handleContextMenu = useCallback(
+  const handleDeleteFolderConfirm = useCallback(async () => {
+    if (folderToDelete) {
+      try {
+        await notesService.deleteFolder(folderToDelete);
+        await refreshNotes();
+        setFolderToDelete(null);
+        setDeleteFolderDialogOpen(false);
+      } catch (error) {
+        console.error("Failed to delete folder:", error);
+      }
+    }
+  }, [folderToDelete, refreshNotes]);
+
+  // Drag and drop: move note to folder
+  const handleDropNote = useCallback(
+    async (noteId: string, targetFolder: string) => {
+      // Don't move if already in that folder
+      const currentFolder = noteFolderPath(noteId);
+      if (currentFolder === targetFolder) return;
+
+      try {
+        const movedNote = await notesService.moveNote(noteId, targetFolder);
+        await refreshNotes();
+        selectNote(movedNote.id);
+      } catch (error) {
+        console.error("Failed to move note:", error);
+      }
+    },
+    [refreshNotes, selectNote]
+  );
+
+  const handleNoteContextMenu = useCallback(
     async (e: React.MouseEvent, noteId: string) => {
       e.preventDefault();
       const isPinned = pinnedIds.has(noteId);
@@ -372,7 +539,6 @@ export function NoteList() {
             action: async () => {
               try {
                 await (isPinned ? unpinNote(noteId) : pinNote(noteId));
-                // Refresh settings after pin/unpin
                 const newSettings = await notesService.getSettings();
                 setSettings(newSettings);
               } catch (error) {
@@ -399,27 +565,115 @@ export function NoteList() {
     [pinnedIds, pinNote, unpinNote, duplicateNote]
   );
 
-  // Memoize display items
+  const handleFolderContextMenu = useCallback(
+    async (e: React.MouseEvent, folderPath: string) => {
+      e.preventDefault();
+
+      const menu = await Menu.new({
+        items: [
+          await MenuItem.new({
+            text: "New Note",
+            action: async () => {
+              try {
+                const note = await notesService.createNoteInFolder(folderPath);
+                await refreshNotes();
+                selectNote(note.id);
+              } catch (error) {
+                console.error("Failed to create note in folder:", error);
+              }
+            },
+          }),
+          await MenuItem.new({
+            text: "New Subfolder",
+            action: async () => {
+              try {
+                let name = "new-folder";
+                let counter = 1;
+                const allNoteIds = notes.map((n) => n.id);
+                while (allNoteIds.some((id) => id.startsWith(`${folderPath}/${name}/`))) {
+                  name = `new-folder-${counter}`;
+                  counter++;
+                }
+                const createdPath = await notesService.createFolder(`${folderPath}/${name}`);
+                setExpandedFolders((prev) => {
+                  const next = new Set(prev);
+                  next.add(folderPath);
+                  return next;
+                });
+                await refreshNotes();
+                setRenamingFolder(createdPath);
+                setRenamingValue(name);
+              } catch (error) {
+                console.error("Failed to create subfolder:", error);
+              }
+            },
+          }),
+          await MenuItem.new({
+            text: "Rename",
+            action: () => {
+              const name = folderPath.split("/").pop() || folderPath;
+              setRenamingFolder(folderPath);
+              setRenamingValue(name);
+            },
+          }),
+          await MenuItem.new({
+            text: "Delete",
+            action: () => {
+              setFolderToDelete(folderPath);
+              setDeleteFolderDialogOpen(true);
+            },
+          }),
+        ],
+      });
+
+      await menu.popup();
+    },
+    [notes, refreshNotes, selectNote]
+  );
+
+  const handleRenamingSubmit = useCallback(async () => {
+    if (!renamingFolder || !renamingValue.trim()) {
+      setRenamingFolder(null);
+      return;
+    }
+    const currentName = renamingFolder.split("/").pop() || "";
+    if (renamingValue.trim() === currentName) {
+      setRenamingFolder(null);
+      return;
+    }
+    try {
+      await notesService.renameFolder(renamingFolder, renamingValue.trim());
+      await refreshNotes();
+    } catch (error) {
+      console.error("Failed to rename folder:", error);
+    }
+    setRenamingFolder(null);
+  }, [renamingFolder, renamingValue, refreshNotes]);
+
+  const handleRenamingCancel = useCallback(() => {
+    setRenamingFolder(null);
+  }, []);
+
   const displayItems = useMemo(() => {
     if (searchQuery.trim()) {
+      const noteMap = new Map(notes.map((n) => [n.id, n]));
       return searchResults.map((r) => ({
         id: r.id,
         title: r.title,
         preview: r.preview,
         modified: r.modified,
+        icon: noteMap.get(r.id)?.icon,
       }));
     }
     return notes;
   }, [searchQuery, searchResults, notes]);
 
-  // Build tree (only when not searching - search shows flat results)
   const isSearching = searchQuery.trim().length > 0;
   const tree = useMemo(() => {
     if (isSearching) return null;
     return buildTree(displayItems);
   }, [displayItems, isSearching]);
 
-  // Listen for focus request from editor (when Escape is pressed)
   useEffect(() => {
     const handleFocusNoteList = () => {
       containerRef.current?.focus();
@@ -454,7 +708,7 @@ export function NoteList() {
     );
   }
 
-  // Search mode: flat list
+  // Search mode: flat list (no drag)
   if (isSearching) {
     return (
       <>
@@ -473,8 +727,9 @@ export function NoteList() {
               isSelected={selectedNoteId === item.id}
               isPinned={pinnedIds.has(item.id)}
               depth={0}
+              icon={item.icon}
               onSelect={selectNote}
-              onContextMenu={handleContextMenu}
+              onContextMenu={handleNoteContextMenu}
             />
           ))}
         </div>
@@ -487,14 +742,48 @@ export function NoteList() {
     );
   }
 
-  // Tree mode: folders + notes
+  // Tree mode: pinned section + folders + notes with drag-and-drop
   return (
     <>
       <div
         ref={containerRef}
         tabIndex={0}
-        className="flex flex-col gap-0.5 p-1.5 outline-none"
+        className={cn(
+          "flex flex-col gap-0.5 p-1.5 outline-none min-h-full",
+          rootDragOver && "bg-accent/5"
+        )}
+        onDragOver={(e) => {
+          // Only accept drop on the container background (root zone)
+          if (e.target === containerRef.current && e.dataTransfer.types.includes(DRAG_NOTE_TYPE)) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            setRootDragOver(true);
+          }
+        }}
+        onDragLeave={(e) => {
+          if (e.target === containerRef.current) setRootDragOver(false);
+        }}
+        onDrop={(e) => {
+          if (e.target === containerRef.current) {
+            e.preventDefault();
+            setRootDragOver(false);
+            const noteId = e.dataTransfer.getData(DRAG_NOTE_TYPE);
+            if (noteId) {
+              handleDropNote(noteId, ".");
+            }
+          }
+        }}
       >
+        {/* Pinned notes section */}
+        <PinnedSection
+          notes={displayItems}
+          pinnedIds={pinnedIds}
+          selectedNoteId={selectedNoteId}
+          onSelect={selectNote}
+          onContextMenu={handleNoteContextMenu}
+        />
+
+        {/* Folder tree */}
         {tree!.map((node) =>
           node.type === "folder" ? (
             <FolderItem
@@ -506,7 +795,14 @@ export function NoteList() {
               selectedNoteId={selectedNoteId}
               pinnedIds={pinnedIds}
               onSelect={selectNote}
-              onContextMenu={handleContextMenu}
+              onNoteContextMenu={handleNoteContextMenu}
+              onFolderContextMenu={handleFolderContextMenu}
+              onDrop={handleDropNote}
+              renamingFolder={renamingFolder}
+              renamingValue={renamingValue}
+              onRenamingChange={setRenamingValue}
+              onRenamingSubmit={handleRenamingSubmit}
+              onRenamingCancel={handleRenamingCancel}
             />
           ) : (
             <NoteItem
@@ -518,8 +814,9 @@ export function NoteList() {
               isSelected={selectedNoteId === (node as NoteNode).note.id}
               isPinned={pinnedIds.has((node as NoteNode).note.id)}
               depth={0}
+              icon={(node as NoteNode).note.icon}
               onSelect={selectNote}
-              onContextMenu={handleContextMenu}
+              onContextMenu={handleNoteContextMenu}
             />
           )
         )}
@@ -528,6 +825,12 @@ export function NoteList() {
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
         onConfirm={handleDeleteConfirm}
+      />
+      <DeleteFolderDialog
+        open={deleteFolderDialogOpen}
+        onOpenChange={setDeleteFolderDialogOpen}
+        onConfirm={handleDeleteFolderConfirm}
+        folderName={folderToDelete?.split("/").pop() || ""}
       />
     </>
   );
@@ -551,6 +854,38 @@ function DeleteDialog({
           <AlertDialogDescription>
             This will permanently delete the note and all its content. This
             action cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={onConfirm}>
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function DeleteFolderDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+  folderName,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+  folderName: string;
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete folder "{folderName}"?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This will permanently delete the folder and all notes inside it.
+            This action cannot be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
