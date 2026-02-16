@@ -1,12 +1,14 @@
 /**
  * Database reference markdown round-trip utilities.
  *
- * Markdown format for database table views:
+ * Markdown format for database views:
  *   [database:my-tasks](view:table)
+ *   [database:my-tasks](view:calendar)
  *
  * On import (markdown -> blocks): preprocessDatabaseRefs converts the
- * markdown link-style reference into an HTML div that BlockNote's parser
- * picks up via the databaseTable block's parse function.
+ * markdown link into a plain-text %%DB:name:view%% marker that survives
+ * BlockNote's parser as a paragraph. injectDatabaseBlocks (in Editor.tsx)
+ * then converts those paragraphs into databaseTable blocks.
  *
  * On export (blocks -> markdown): postprocessDatabaseRefs converts the
  * block's HTML output back into the markdown reference format.
@@ -14,20 +16,16 @@
 
 /**
  * Pre-process markdown before passing to BlockNote's parser.
- * Converts database reference links into HTML div blocks.
+ * Converts database reference links into plain-text markers.
  *
- * Input:
- *   [database:my-tasks](view:table)
- *
- * Output:
- *   <p data-database-table="my-tasks">[database:my-tasks](view:table)</p>
+ * Input:  [database:my-tasks](view:table)
+ * Output: %%DB:my-tasks:table%%
  */
 export function preprocessDatabaseRefs(markdown: string): string {
-  // Match [database:name](view:table) on its own line (or inline)
   return markdown.replace(
-    /\[database:([^\]]+)\]\(view:table\)/g,
-    (_match, dbName: string) => {
-      return `<p data-database-table="${escapeAttr(dbName)}">[database:${dbName}](view:table)</p>`;
+    /\[database:([^\]]+)\]\(view:(\w+)\)/g,
+    (_match, dbName: string, viewType: string) => {
+      return `%%DB:${dbName}:${viewType}%%`;
     },
   );
 }
@@ -35,32 +33,19 @@ export function preprocessDatabaseRefs(markdown: string): string {
 /**
  * Post-process markdown output from BlockNote's blocksToMarkdownLossy.
  * Converts database table HTML blocks back to markdown reference format.
- *
- * Input:
- *   <p data-database-table="my-tasks">[database:my-tasks](view:table)</p>
- *
- * Output:
- *   [database:my-tasks](view:table)
  */
 export function postprocessDatabaseRefs(markdown: string): string {
-  // Match the HTML output from toExternalHTML
+  // Match the HTML output from toExternalHTML (div or p, with or without view attr)
   return markdown.replace(
-    /<p data-database-table="([^"]*)">[^<]*<\/p>/g,
-    (_match, dbName: string) => {
+    /<(?:div|p) data-database-table="([^"]*)"(?:\s+data-database-view="([^"]*)")?(?:>[^<]*<\/(?:div|p)>|\s*\/>)/g,
+    (_match, dbName: string, viewType?: string) => {
       const name = dbName
         .replace(/&quot;/g, '"')
         .replace(/&lt;/g, "<")
         .replace(/&gt;/g, ">")
         .replace(/&amp;/g, "&");
-      return `[database:${name}](view:table)`;
+      const view = viewType || "table";
+      return `[database:${name}](view:${view})`;
     },
   );
-}
-
-function escapeAttr(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
 }

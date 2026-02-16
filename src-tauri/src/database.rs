@@ -1000,7 +1000,7 @@ pub fn update_schema(
 
 // ---- Helpers ----
 
-fn slugify(name: &str) -> String {
+pub fn slugify(name: &str) -> String {
     let mut slug = String::new();
     let mut last_was_dash = false;
 

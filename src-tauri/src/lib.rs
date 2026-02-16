@@ -1607,6 +1607,40 @@ const BUILTIN_TEMPLATES: &[(&str, &str)] = &[
     ("daily-journal", "# Daily Journal\n\n## {{date:MMMM D, YYYY}}\n\n### Gratitude\n\n- \n\n### Today's Goals\n\n- [ ] \n\n### Notes\n\n{{cursor}}\n\n### Reflection\n\n"),
     ("meeting-notes", "# Meeting Notes\n\n**Date:** {{date:YYYY-MM-DD}}  \n**Time:** {{time}}  \n**Attendees:**\n\n- \n\n## Agenda\n\n1. \n\n## Discussion\n\n{{cursor}}\n\n## Action Items\n\n- [ ] \n\n## Next Steps\n\n"),
     ("project-brief", "# {{title}}\n\n## Overview\n\n{{cursor}}\n\n## Goals\n\n- \n\n## Scope\n\n### In Scope\n\n- \n\n### Out of Scope\n\n- \n\n## Timeline\n\n| Phase | Start | End | Status |\n|-------|-------|-----|--------|\n| Planning | {{date:YYYY-MM-DD}} | | Not Started |\n\n## Resources\n\n- \n\n## Risks\n\n| Risk | Impact | Mitigation |\n|------|--------|------------|\n| | | |\n"),
+    ("weekly-planner", "# Weekly Plan — {{date:MMMM D, YYYY}}\n\n> [!TIP]\n> Plan your week ahead. Check off tasks as you complete them.\n\n---\n\n## Monday\n\n- [ ] \n- [ ] \n\n## Tuesday\n\n- [ ] \n- [ ] \n\n## Wednesday\n\n- [ ] \n- [ ] \n\n## Thursday\n\n- [ ] \n- [ ] \n\n## Friday\n\n- [ ] \n- [ ] \n\n---\n\n## Notes\n\n{{cursor}}\n\n## End-of-Week Review\n\n> [!IMPORTANT]\n> What went well this week? What could improve next week?\n\n"),
+    ("feature-spec", "# {{title}}\n\n> [!NOTE]\n> Brief description of this feature and why it matters.\n\n---\n\n## Problem\n\n{{cursor}}\n\n## Proposed Solution\n\n\n\n## Acceptance Criteria\n\n- [ ] \n- [ ] \n- [ ] \n\n---\n\n## Technical Notes\n\n| Component | Changes Needed |\n|-----------|----------------|\n| | |\n| | |\n\n## Open Questions\n\n> [!WARNING]\n> List unknowns, risks, or blockers here.\n\n- \n"),
+    ("decision-doc", "# Decision: {{title}}\n\n**Date:** {{date:YYYY-MM-DD}}  \n**Status:** Proposed\n\n---\n\n## Context\n\n{{cursor}}\n\n## Options Considered\n\n### Option A\n\n\n\n### Option B\n\n\n\n---\n\n## Comparison\n\n| Criteria | Option A | Option B |\n|----------|----------|----------|\n| Effort | | |\n| Risk | | |\n| Outcome | | |\n\n## Decision\n\n> [!IMPORTANT]\n> Record the final decision and rationale so future readers understand the \"why.\"\n\n\n\n## Consequences\n\n- \n"),
+    ("reading-notes", "# {{title}}\n\n**Author:**  \n**Date read:** {{date:YYYY-MM-DD}}\n\n---\n\n## Summary\n\n{{cursor}}\n\n## Key Takeaways\n\n> [!TIP]\n> The most important ideas from this reading.\n\n1. \n2. \n3. \n\n---\n\n## Detailed Notes\n\n\n\n## Quotes\n\n> \n\n## Action Items\n\n- [ ] \n"),
+    ("sprint-retro", "# Sprint Retrospective — {{date:MMMM D, YYYY}}\n\n---\n\n## What Went Well\n\n- \n- \n\n## What Could Improve\n\n- \n- \n\n## Action Items\n\n- [ ] \n- [ ] \n\n---\n\n> [!IMPORTANT]\n> Follow up on action items at the start of next sprint.\n\n{{cursor}}\n"),
+    ("habit-tracker", "# Habit Tracker — {{date:MMMM YYYY}}\n\n> [!TIP]\n> Track your daily habits. Mark each cell with a check when complete.\n\n---\n\n| Habit | Mon | Tue | Wed | Thu | Fri | Sat | Sun |\n|-------|-----|-----|-----|-----|-----|-----|-----|\n| Exercise | | | | | | | |\n| Reading | | | | | | | |\n| Meditation | | | | | | | |\n| Writing | | | | | | | |\n| | | | | | | | |\n\n---\n\n## Weekly Reflection\n\n{{cursor}}\n\n## Goals for Next Week\n\n- [ ] \n"),
+    ("goal-tracker", "# Goals — {{date:YYYY}}\n\n> [!TIP]\n> Set SMART goals: Specific, Measurable, Achievable, Relevant, Time-bound.\n\n---\n\n## Annual Goals\n\n| Goal | Category | Target Date | Status |\n|------|----------|-------------|--------|\n| | Career | | Not Started |\n| | Health | | Not Started |\n| | Personal | | Not Started |\n| | Financial | | Not Started |\n\n---\n\n## Q1 Milestones\n\n- [ ] \n- [ ] \n\n## Q2 Milestones\n\n- [ ] \n- [ ] \n\n## Q3 Milestones\n\n- [ ] \n- [ ] \n\n## Q4 Milestones\n\n- [ ] \n- [ ] \n\n---\n\n## Progress Notes\n\n{{cursor}}\n"),
+    ("eisenhower-matrix", "# Eisenhower Matrix — {{date:MMMM D, YYYY}}\n\n> [!NOTE]\n> Prioritize by urgency and importance. Focus on Quadrant 1 first, then schedule Quadrant 2.\n\n---\n\n## 1. Urgent & Important (Do First)\n\n- [ ] \n- [ ] \n\n## 2. Important, Not Urgent (Schedule)\n\n- [ ] \n- [ ] \n\n## 3. Urgent, Not Important (Delegate)\n\n- [ ] \n- [ ] \n\n## 4. Neither (Eliminate)\n\n- \n- \n\n---\n\n{{cursor}}\n"),
+    ("one-on-one", "# 1:1 — {{date:MMMM D, YYYY}}\n\n**With:**  \n**Cadence:** Weekly\n\n---\n\n## Check-in\n\nHow are things going? Any blockers?\n\n{{cursor}}\n\n## Updates\n\n- \n\n## Discussion Topics\n\n- \n\n## Action Items\n\n- [ ] \n- [ ] \n\n---\n\n> [!NOTE]\n> Carry over unresolved items to next meeting.\n"),
+    ("standup", "# Standup — {{date:MMMM D, YYYY}}\n\n---\n\n## Yesterday\n\n- \n\n## Today\n\n- \n\n## Blockers\n\n> [!WARNING]\n> List anything preventing progress.\n\n{{cursor}}\n"),
+    ("travel-planner", "# Trip: {{title}}\n\n**Dates:**  →   \n**Destination:**  \n**Budget:** $\n\n---\n\n## Packing List\n\n- [ ] Passport / ID\n- [ ] Phone & chargers\n- [ ] Toiletries\n- [ ] \n\n## Itinerary\n\n| Day | Date | Activity | Location | Notes |\n|-----|------|----------|----------|-------|\n| 1 | | Arrival | | |\n| 2 | | | | |\n| 3 | | | | |\n| 4 | | Departure | | |\n\n---\n\n## Accommodation\n\n**Hotel/Airbnb:**  \n**Address:**  \n**Confirmation #:**  \n\n## Transportation\n\n- \n\n## Notes\n\n{{cursor}}\n"),
+    ("book-tracker", "# Reading Log\n\n> [!TIP]\n> Track books you're reading, want to read, and have finished.\n\n---\n\n| Title | Author | Status | Rating | Finished |\n|-------|--------|--------|--------|----------|\n| | | Reading | | |\n| | | To Read | | |\n| | | To Read | | |\n| | | Done | ⭐⭐⭐⭐ | |\n\n---\n\n## Currently Reading\n\n**Title:**  \n**Author:**  \n\n### Notes\n\n{{cursor}}\n\n### Key Quotes\n\n> \n"),
+    ("meal-planner", "# Meal Plan — {{date:MMMM D, YYYY}}\n\n---\n\n| | Breakfast | Lunch | Dinner |\n|-----------|-----------|-------|--------|\n| Monday | | | |\n| Tuesday | | | |\n| Wednesday | | | |\n| Thursday | | | |\n| Friday | | | |\n| Saturday | | | |\n| Sunday | | | |\n\n---\n\n## Grocery List\n\n- [ ] \n- [ ] \n- [ ] \n- [ ] \n\n## Recipes to Try\n\n{{cursor}}\n"),
+    ("budget-tracker", "# Budget — {{date:MMMM YYYY}}\n\n---\n\n## Income\n\n| Source | Amount |\n|--------|--------|\n| Salary | $ |\n| | $ |\n| **Total** | **$** |\n\n## Fixed Expenses\n\n| Category | Amount |\n|----------|--------|\n| Rent/Mortgage | $ |\n| Utilities | $ |\n| Insurance | $ |\n| Subscriptions | $ |\n| **Total** | **$** |\n\n## Variable Expenses\n\n| Category | Budget | Actual |\n|----------|--------|--------|\n| Groceries | $ | $ |\n| Dining Out | $ | $ |\n| Transport | $ | $ |\n| Entertainment | $ | $ |\n| **Total** | **$** | **$** |\n\n---\n\n> [!IMPORTANT]\n> Review at month end. Adjust next month's budget based on actuals.\n\n## Notes\n\n{{cursor}}\n"),
+    ("blog-post", "# {{title}}\n\n**Status:** Draft  \n**Date:** {{date:YYYY-MM-DD}}  \n**Tags:**  \n\n---\n\n## Hook\n\n{{cursor}}\n\n## Main Points\n\n### 1. \n\n\n\n### 2. \n\n\n\n### 3. \n\n\n\n---\n\n## Conclusion\n\n\n\n## Call to Action\n\n> [!TIP]\n> End with a clear next step for the reader.\n\n"),
+    ("cornell-notes", "# {{title}}\n\n**Date:** {{date:YYYY-MM-DD}}  \n**Subject:**  \n\n---\n\n## Key Questions\n\n- \n- \n- \n\n## Notes\n\n{{cursor}}\n\n---\n\n## Summary\n\n> [!IMPORTANT]\n> Summarize the main ideas in your own words after reviewing.\n\n"),
+    ("project-tracker", "# {{title}}\n\n**Owner:**  \n**Start:** {{date:YYYY-MM-DD}}  \n**Target:**  \n**Status:** Planning\n\n---\n\n> [!NOTE]\n> Track milestones and tasks for this project.\n\n## Milestones\n\n| Milestone | Due | Status | Notes |\n|-----------|-----|--------|-------|\n| Kickoff | {{date:YYYY-MM-DD}} | Done | |\n| | | Not Started | |\n| | | Not Started | |\n| Launch | | Not Started | |\n\n---\n\n## Tasks\n\n- [ ] \n- [ ] \n- [ ] \n\n## Risks\n\n> [!WARNING]\n> Identify risks early and plan mitigations.\n\n| Risk | Likelihood | Impact | Mitigation |\n|------|-----------|--------|------------|\n| | | | |\n\n## Notes\n\n{{cursor}}\n"),
+    ("okr-tracker", "# OKRs — {{date:MMMM YYYY}}\n\n> [!TIP]\n> Each Objective should have 2–5 measurable Key Results.\n\n---\n\n## Objective 1:\n\n| Key Result | Target | Current | Progress |\n|------------|--------|---------|----------|\n| | | | 0% |\n| | | | 0% |\n| | | | 0% |\n\n## Objective 2:\n\n| Key Result | Target | Current | Progress |\n|------------|--------|---------|----------|\n| | | | 0% |\n| | | | 0% |\n\n---\n\n## Weekly Check-in\n\n{{cursor}}\n\n> [!IMPORTANT]\n> Review OKRs weekly. Update progress and adjust approach as needed.\n"),
+    ("gratitude-journal", "# Gratitude — {{date:MMMM D, YYYY}}\n\n## Three Things I'm Grateful For\n\n1. \n2. \n3. \n\n---\n\n## Today's Wins\n\nWhat went well today, no matter how small?\n\n- \n\n## Positive Affirmation\n\n> {{cursor}}\n\n## Reflection\n\nWhat made today meaningful?\n\n"),
+    ("workout-log", "# Workout — {{date:MMMM D, YYYY}}\n\n**Type:**  \n**Duration:**  \n**Energy Level:** /10\n\n---\n\n## Exercises\n\n| Exercise | Sets | Reps | Weight | Notes |\n|----------|------|------|--------|-------|\n| | | | | |\n| | | | | |\n| | | | | |\n| | | | | |\n| | | | | |\n\n---\n\n## Cardio\n\n| Activity | Duration | Distance | Pace |\n|----------|----------|----------|------|\n| | | | |\n\n## Notes\n\n{{cursor}}\n\n> [!TIP]\n> Track progressive overload: aim to increase weight, reps, or sets each week.\n"),
+    ("recipe", "# {{title}}\n\n**Prep Time:**  \n**Cook Time:**  \n**Servings:**  \n**Difficulty:**  \n\n---\n\n## Ingredients\n\n- [ ] \n- [ ] \n- [ ] \n- [ ] \n- [ ] \n\n---\n\n## Instructions\n\n1. \n2. \n3. \n4. \n\n---\n\n## Notes\n\n{{cursor}}\n\n## Variations\n\n- \n"),
+    ("subscription-tracker", "# Subscriptions — {{date:MMMM YYYY}}\n\n> [!NOTE]\n> Review monthly to cancel unused subscriptions.\n\n---\n\n| Service | Category | Cost | Billing | Renewal Date | Essential? |\n|---------|----------|------|---------|--------------|------------|\n| | Streaming | $/mo | Monthly | | Yes |\n| | Music | $/mo | Monthly | | |\n| | Cloud | $/mo | Monthly | | Yes |\n| | Software | $/yr | Annual | | |\n| | News | $/mo | Monthly | | |\n| | Fitness | $/mo | Monthly | | |\n| | | | | | |\n\n---\n\n## Monthly Total: $\n\n## Annual Total: $\n\n---\n\n> [!WARNING]\n> Check for price increases and free alternatives.\n\n## Notes\n\n{{cursor}}\n"),
+    ("weekly-review", "# Weekly Review — {{date:MMMM D, YYYY}}\n\n> [!TIP]\n> Do this every Friday or Sunday. Clear your mind, plan the next week.\n\n---\n\n## Capture & Process\n\n- [ ] Empty all inboxes (email, messages, notes)\n- [ ] Review loose papers and files\n- [ ] Process all open browser tabs\n\n## Review\n\n- [ ] Review calendar (past week)\n- [ ] Review calendar (next week)\n- [ ] Review active projects\n- [ ] Review waiting-for items\n- [ ] Review someday/maybe list\n\n---\n\n## This Week's Wins\n\n- \n- \n\n## Lessons Learned\n\n- \n\n## Next Week's Priorities\n\n1. \n2. \n3. \n\n---\n\n## Open Loops\n\nAnything still on your mind?\n\n{{cursor}}\n"),
+    ("zettelkasten", "# {{title}}\n\n**ID:** {{date:YYYYMMDDHHmm}}  \n**Tags:**  \n**Source:**  \n\n---\n\n## Idea\n\n{{cursor}}\n\n---\n\n## Connections\n\nHow does this relate to other ideas?\n\n- \n- \n\n## References\n\n- \n\n> [!NOTE]\n> Each note should contain one atomic idea. Link generously to other notes.\n"),
+    ("swot-analysis", "# SWOT Analysis: {{title}}\n\n**Date:** {{date:YYYY-MM-DD}}\n\n---\n\n## Strengths (Internal)\n\nWhat advantages do we have?\n\n- \n- \n\n## Weaknesses (Internal)\n\nWhat could be improved?\n\n- \n- \n\n## Opportunities (External)\n\nWhat trends or changes can we leverage?\n\n- \n- \n\n## Threats (External)\n\nWhat obstacles do we face?\n\n- \n- \n\n---\n\n## Key Actions\n\n| Priority | Action | Owner | Due |\n|----------|--------|-------|-----|\n| | | | |\n| | | | |\n\n## Notes\n\n{{cursor}}\n"),
+    ("content-calendar", "# Content Calendar — {{date:MMMM YYYY}}\n\n> [!TIP]\n> Plan content across all channels. Batch-create for efficiency.\n\n---\n\n| Date | Channel | Topic | Status | Notes |\n|------|---------|-------|--------|-------|\n| | Blog | | Draft | |\n| | Twitter | | Idea | |\n| | Newsletter | | Idea | |\n| | YouTube | | Idea | |\n| | LinkedIn | | Idea | |\n| | | | | |\n| | | | | |\n\n---\n\n## Content Ideas Backlog\n\n- \n- \n- \n\n## This Month's Theme\n\n{{cursor}}\n\n> [!NOTE]\n> Repurpose content: one blog post can become tweets, newsletter sections, and video scripts.\n"),
+    ("interview-prep", "# Interview: {{title}}\n\n**Company:**  \n**Role:**  \n**Date:** {{date:YYYY-MM-DD}}  \n**Interviewer(s):**  \n\n---\n\n## Company Research\n\n- **What they do:** \n- **Recent news:** \n- **Why I want to work here:** \n\n## Role Understanding\n\n- **Key responsibilities:** \n- **Must-have skills:** \n\n---\n\n## Questions to Prepare\n\n> [!NOTE]\n> Use the STAR method: Situation, Task, Action, Result.\n\n| Question | My Answer (Key Points) |\n|----------|------------------------|\n| Tell me about yourself | |\n| Why this company? | |\n| Biggest challenge you've overcome? | |\n| Where do you see yourself in 5 years? | |\n| | |\n\n---\n\n## Questions to Ask Them\n\n- \n- \n- \n\n## Post-Interview Notes\n\n{{cursor}}\n"),
+    ("faq-page", "---\nicon: \"❓\"\n---\n# {{title}}\n\n[toc]\n\n---\n\n<details><summary>What is this about?</summary></details>\n\n<details><summary>How do I get started?</summary></details>\n\n<details><summary>What are the requirements?</summary></details>\n\n<details><summary>Where can I learn more?</summary></details>\n\n<details><summary>Who do I contact for help?</summary></details>\n\n---\n\n{{cursor}}\n"),
+    ("pros-cons", "---\nicon: \"⚖️\"\n---\n# {{title}}\n\n**Date:** {{date:YYYY-MM-DD}}\n\n---\n\n:::columns\n::: col\n## Pros\n\n- \n- \n- \n:::\n::: col\n## Cons\n\n- \n- \n- \n:::\n:::\n\n---\n\n## Verdict\n\n{{cursor}}\n\n> [!IMPORTANT]\n> Weigh the factors that matter most to your situation.\n"),
+    ("research-note", "---\nicon: \"🔬\"\nwide: true\n---\n# {{title}}\n\n**Date:** {{date:YYYY-MM-DD}}  \n**Topic:**  \n**Sources:**  \n\n[toc]\n\n---\n\n## Key Findings\n\n{{cursor}}\n\n## Evidence\n\n> [!NOTE]\n> Link to related notes with [[wikilinks]] for a connected knowledge base.\n\n:::columns\n::: col\n### Supporting\n\n- \n- \n:::\n::: col\n### Contradicting\n\n- \n- \n:::\n:::\n\n---\n\n## Methodology\n\n\n\n## Data\n\n| Variable | Value | Source |\n|----------|-------|--------|\n| | | |\n\n## Related Notes\n\n- [[Related Topic A]]\n- [[Related Topic B]]\n\n---\n\n## Formulas & Equations\n\nInline: $E = mc^2$\n\nBlock:\n\n$$\n\\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}\n$$\n"),
+    ("project-dashboard", "---\nicon: \"📊\"\nwide: true\n---\n# {{title}}\n\n**Owner:**  \n**Start:** {{date:YYYY-MM-DD}}  \n**Status:** Active\n\n[toc]\n\n---\n\n## Overview\n\n{{cursor}}\n\n## Task Database\n\n[database:project-tasks](view:table)\n\n> [!TIP]\n> Use the slash menu to create the database above if it doesn't exist yet. Add columns for Status, Priority, Assignee, and Due Date.\n\n---\n\n## Progress\n\n<details><summary>Completed Milestones</summary></details>\n\n<details><summary>Upcoming Milestones</summary></details>\n\n---\n\n:::columns\n::: col\n### This Week\n\n- [ ] \n- [ ] \n:::\n::: col\n### Blockers\n\n> [!WARNING]\n> List anything preventing progress.\n\n- \n:::\n:::\n\n---\n\n## Meeting Notes\n\n- [[Meeting 1]]\n\n## Decisions Log\n\n| Date | Decision | Rationale |\n|------|----------|-----------|\n| {{date:YYYY-MM-DD}} | | |\n"),
+    ("study-guide", "---\nicon: \"📚\"\n---\n# {{title}}\n\n**Subject:**  \n**Exam Date:**  \n\n[toc]\n\n---\n\n## Key Concepts\n\n<details><summary>Concept 1</summary></details>\n\n<details><summary>Concept 2</summary></details>\n\n<details><summary>Concept 3</summary></details>\n\n---\n\n## Formulas\n\n$$\n\n$$\n\n## Summary Table\n\n| Term | Definition |\n|------|------------|\n| | |\n| | |\n\n---\n\n## Practice Questions\n\n1. \n2. \n3. \n\n## Related Notes\n\n- [[Topic A]]\n- [[Topic B]]\n\n{{cursor}}\n"),
+    ("comparison", "---\nicon: \"🔄\"\nwide: true\n---\n# {{title}}\n\n**Date:** {{date:YYYY-MM-DD}}\n\n---\n\n:::columns\n::: col\n## Option A\n\n**Name:**  \n**Cost:**  \n\n### Strengths\n- \n- \n\n### Weaknesses\n- \n:::\n::: col\n## Option B\n\n**Name:**  \n**Cost:**  \n\n### Strengths\n- \n- \n\n### Weaknesses\n- \n:::\n:::\n\n---\n\n## Detailed Comparison\n\n| Criteria | Option A | Option B |\n|----------|----------|----------|\n| Price | | |\n| Quality | | |\n| Speed | | |\n| Support | | |\n\n---\n\n## Recommendation\n\n> [!IMPORTANT]\n> Final verdict and reasoning.\n\n{{cursor}}\n"),
+    ("kitchen-sink", "---\nicon: \"🧪\"\nwide: true\n---\n# Scratch Feature Torture Test\n\n**Created:** {{date:MMMM D, YYYY}} at {{time}}  \n**Purpose:** Exercise every Scratch feature on a single page\n\n[toc]\n\n---\n\n## 1. Text Formatting\n\nThis paragraph has **bold**, *italic*, ***bold italic***, ~~strikethrough~~, and `inline code`. Here is a [hyperlink](https://example.com).\n\n## 2. Headings\n\n### Level 3 Heading\n\n#### Level 4 Heading\n\n## 3. Lists\n\n### Unordered\n\n- First item\n  - Nested item\n    - Deep nested\n- Second item\n\n### Ordered\n\n1. Step one\n2. Step two\n   1. Sub-step\n3. Step three\n\n### Task List\n\n- [x] Completed task\n- [ ] Pending task\n- [ ] Another pending task\n\n---\n\n## 4. Blockquotes\n\n> This is a blockquote. It can span multiple lines and contain **formatting**.\n>\n> — Someone wise\n\n---\n\n## 5. Callouts (All 5 Types)\n\n> [!NOTE]\n> This is a **note** callout for general information.\n\n> [!TIP]\n> This is a **tip** callout for helpful advice.\n\n> [!IMPORTANT]\n> This is an **important** callout for critical information.\n\n> [!WARNING]\n> This is a **warning** callout for potential issues.\n\n> [!CAUTION]\n> This is a **caution** callout for dangerous actions.\n\n---\n\n## 6. Code Block\n\n```rust\nfn main() {\n    let greeting = \"Hello from Scratch!\";\n    println!(\"{}\", greeting);\n}\n```\n\n```typescript\nconst sum = (a: number, b: number): number => a + b;\nconsole.log(sum(2, 3));\n```\n\n---\n\n## 7. Tables\n\n| Feature | Status | Priority | Owner |\n|---------|--------|----------|-------|\n| Editor blocks | Done | High | Claude |\n| Databases | Done | High | Claude |\n| Page decoration | Done | Medium | Claude |\n| Templates | Done | Low | Claude |\n\n---\n\n## 8. Divider\n\nContent above the divider.\n\n---\n\nContent below the divider.\n\n---\n\n## 9. Toggle Blocks\n\n<details><summary>Click to expand — Toggle Block 1</summary></details>\n\n<details><summary>Click to expand — Toggle Block 2</summary></details>\n\n<details><summary>Nested content toggle</summary></details>\n\n---\n\n## 10. Column Layout\n\n:::columns\n::: col\n### Left Column\n\nThis is the left column. It supports **full markdown** including:\n\n- Bullet points\n- **Bold text**\n- `Inline code`\n:::\n::: col\n### Right Column\n\nThis is the right column with different content:\n\n1. Numbered list\n2. More items\n3. Third item\n:::\n:::\n\n---\n\n## 11. Wikilinks\n\nLink to other notes: [[Daily Journal]] and [[Meeting Notes]].\n\nWikilinks create a connected knowledge graph between your notes.\n\n---\n\n## 12. Equations\n\n### Inline Math\n\nEuler's identity: $e^{i\\pi} + 1 = 0$. The area of a circle is $A = \\pi r^2$.\n\n### Block Math\n\n$$\n\\int_{-\\infty}^{\\infty} e^{-x^2} dx = \\sqrt{\\pi}\n$$\n\n$$\n\\sum_{n=1}^{\\infty} \\frac{1}{n^2} = \\frac{\\pi^2}{6}\n$$\n\n---\n\n## 13. Database — Table View\n\n[database:scratch-torture-db](view:table)\n\n---\n\n## 14. Database — Calendar View\n\n[database:scratch-torture-db](view:calendar)\n\n---\n\n## 15. Images\n\nUse the slash menu or drag-and-drop to insert images. They are stored in the `.assets/` folder.\n\n---\n\n## 16. Template Variables\n\nThese were substituted when this note was created:\n\n- **Date:** {{date:YYYY-MM-DD}}\n- **Long date:** {{date:MMMM D, YYYY}}\n- **Time:** {{time}}\n- **Title:** {{title}}\n- **Cursor landed here →** {{cursor}}\n\n---\n\n## 17. Page Decoration\n\nThis note uses frontmatter for:\n- `icon: \"🧪\"` — Page icon displayed in sidebar\n- `wide: true` — Full-width layout\n\n---\n\n*End of torture test. If everything above renders correctly, all Scratch features are working.*\n"),
 ];
 
 fn ensure_templates_dir(notes_folder: &str) -> Result<PathBuf, String> {
@@ -1848,6 +1882,9 @@ pub async fn create_note_from_template_impl(
             let _ = search_index.index_note(&file_name, &actual_title, &content, modified);
         }
     }
+    // Auto-create any referenced databases that don't exist yet
+    ensure_template_databases(&folder_path, &content);
+
     Ok(TemplateNoteResult {
         note: Note {
             id: file_name,
@@ -1858,6 +1895,111 @@ pub async fn create_note_from_template_impl(
         },
         cursor_line,
     })
+}
+
+/// Scan template content for `[database:name](view:...)` references and create
+/// sample databases with columns and rows so the template works out of the box.
+fn ensure_template_databases(notes_folder: &std::path::Path, content: &str) {
+    let re = regex::Regex::new(r"\[database:([^\]]+)\]\(view:(\w+)\)").unwrap();
+    for cap in re.captures_iter(content) {
+        let db_name = &cap[1];
+        let slug = database::slugify(db_name);
+        let db_folder = notes_folder.join(&slug);
+        if db_folder.exists() {
+            continue; // Already exists
+        }
+        // Create a sample database with useful columns and rows
+        let columns = vec![
+            database::ColumnDef {
+                id: "title".to_string(),
+                name: "Title".to_string(),
+                col_type: database::ColumnType::Text,
+                options: None,
+                target: None,
+            },
+            database::ColumnDef {
+                id: "status".to_string(),
+                name: "Status".to_string(),
+                col_type: database::ColumnType::Select,
+                options: Some(vec![
+                    "Backlog".to_string(),
+                    "In Progress".to_string(),
+                    "Done".to_string(),
+                ]),
+                target: None,
+            },
+            database::ColumnDef {
+                id: "priority".to_string(),
+                name: "Priority".to_string(),
+                col_type: database::ColumnType::Select,
+                options: Some(vec![
+                    "High".to_string(),
+                    "Medium".to_string(),
+                    "Low".to_string(),
+                ]),
+                target: None,
+            },
+            database::ColumnDef {
+                id: "due".to_string(),
+                name: "Due Date".to_string(),
+                col_type: database::ColumnType::Date,
+                options: None,
+                target: None,
+            },
+            database::ColumnDef {
+                id: "done".to_string(),
+                name: "Complete".to_string(),
+                col_type: database::ColumnType::Checkbox,
+                options: None,
+                target: None,
+            },
+        ];
+
+        match database::create_database(notes_folder, db_name, columns, None) {
+            Ok(_) => {
+                // Add sample rows
+                // Generate dates relative to today
+                let today = chrono::Local::now().date_naive();
+                let fmt = |d: chrono::NaiveDate| d.format("%Y-%m-%d").to_string();
+                let sample_rows: Vec<std::collections::HashMap<String, serde_json::Value>> = vec![
+                    [
+                        ("title".to_string(), serde_json::json!("Set up project structure")),
+                        ("status".to_string(), serde_json::json!("Done")),
+                        ("priority".to_string(), serde_json::json!("High")),
+                        ("due".to_string(), serde_json::json!(fmt(today - chrono::Duration::days(3)))),
+                        ("done".to_string(), serde_json::json!(true)),
+                    ].into_iter().collect(),
+                    [
+                        ("title".to_string(), serde_json::json!("Design the UI mockups")),
+                        ("status".to_string(), serde_json::json!("In Progress")),
+                        ("priority".to_string(), serde_json::json!("High")),
+                        ("due".to_string(), serde_json::json!(fmt(today))),
+                        ("done".to_string(), serde_json::json!(false)),
+                    ].into_iter().collect(),
+                    [
+                        ("title".to_string(), serde_json::json!("Write documentation")),
+                        ("status".to_string(), serde_json::json!("Backlog")),
+                        ("priority".to_string(), serde_json::json!("Medium")),
+                        ("due".to_string(), serde_json::json!(fmt(today + chrono::Duration::days(5)))),
+                        ("done".to_string(), serde_json::json!(false)),
+                    ].into_iter().collect(),
+                    [
+                        ("title".to_string(), serde_json::json!("Add unit tests")),
+                        ("status".to_string(), serde_json::json!("Backlog")),
+                        ("priority".to_string(), serde_json::json!("Low")),
+                        ("due".to_string(), serde_json::json!(fmt(today + chrono::Duration::days(10)))),
+                        ("done".to_string(), serde_json::json!(false)),
+                    ].into_iter().collect(),
+                ];
+                for fields in sample_rows {
+                    let _ = database::create_row(notes_folder, &slug, fields, None);
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to create template database '{}': {}", db_name, e);
+            }
+        }
+    }
 }
 
 #[tauri::command]

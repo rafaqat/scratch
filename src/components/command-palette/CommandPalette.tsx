@@ -79,6 +79,8 @@ export function CommandPalette({
   const { status, gitAvailable, commit, push } = useGit();
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [templateMode, setTemplateMode] = useState(false);
+  const [templateQuery, setTemplateQuery] = useState("");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [noteToDelete, setNoteToDelete] = useState<string | null>(null);
   const [localSearchResults, setLocalSearchResults] = useState<
@@ -112,15 +114,15 @@ export function CommandPalette({
       },
     ];
 
-    // Add template commands
-    for (const template of templates) {
+    // Single entry to open template picker
+    if (templates.length > 0) {
       baseCommands.push({
-        id: `template-${template.id}`,
-        label: `New from Template: ${template.name}`,
+        id: "new-from-template",
+        label: "New from Template...",
         icon: <TemplateIcon className="w-4.5 h-4.5 stroke-[1.5]" />,
         action: () => {
-          createNoteFromTemplate(template.id);
-          onClose();
+          setTemplateMode(true);
+          setTemplateQuery("");
         },
       });
     }
@@ -330,7 +332,6 @@ export function CommandPalette({
     pinNote,
     unpinNote,
     templates,
-    createNoteFromTemplate,
   ]);
 
   // Debounced search using Tantivy (local state, doesn't affect sidebar)
@@ -386,6 +387,13 @@ export function CommandPalette({
     );
   }, [query, commands]);
 
+  // Filtered templates for template picker mode
+  const filteredTemplates = useMemo(() => {
+    if (!templateQuery.trim()) return templates;
+    const q = templateQuery.toLowerCase();
+    return templates.filter((t) => t.name.toLowerCase().includes(q));
+  }, [templateQuery, templates]);
+
   // Memoize all items (commands first, then notes)
   const allItems = useMemo(
     () => [
@@ -416,9 +424,18 @@ export function CommandPalette({
     if (open) {
       setQuery("");
       setSelectedIndex(0);
+      setTemplateMode(false);
+      setTemplateQuery("");
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [open]);
+
+  // Focus input when entering template mode
+  useEffect(() => {
+    if (templateMode) {
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+  }, [templateMode]);
 
   // Reset selection when items change
   useEffect(() => {
@@ -451,6 +468,48 @@ export function CommandPalette({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      if (templateMode) {
+        switch (e.key) {
+          case "ArrowDown":
+            e.preventDefault();
+            e.stopPropagation();
+            setSelectedIndex((i) =>
+              Math.min(i + 1, filteredTemplates.length - 1),
+            );
+            break;
+          case "ArrowUp":
+            e.preventDefault();
+            e.stopPropagation();
+            setSelectedIndex((i) => Math.max(i - 1, 0));
+            break;
+          case "Enter":
+            e.preventDefault();
+            e.stopPropagation();
+            if (filteredTemplates[selectedIndex]) {
+              createNoteFromTemplate(filteredTemplates[selectedIndex].id);
+              onClose();
+            }
+            break;
+          case "Escape":
+            e.preventDefault();
+            e.stopPropagation();
+            setTemplateMode(false);
+            setTemplateQuery("");
+            setSelectedIndex(0);
+            break;
+          case "Backspace":
+            if (!templateQuery) {
+              e.preventDefault();
+              e.stopPropagation();
+              setTemplateMode(false);
+              setTemplateQuery("");
+              setSelectedIndex(0);
+            }
+            break;
+        }
+        return;
+      }
+
       switch (e.key) {
         case "ArrowDown":
           e.preventDefault();
@@ -476,7 +535,15 @@ export function CommandPalette({
           break;
       }
     },
-    [allItems, selectedIndex, onClose],
+    [
+      allItems,
+      selectedIndex,
+      onClose,
+      templateMode,
+      filteredTemplates,
+      templateQuery,
+      createNoteFromTemplate,
+    ],
   );
 
   if (!open) return null;
@@ -487,86 +554,170 @@ export function CommandPalette({
     <div className="fixed inset-0 z-50 flex items-center justify-center py-11 px-4 pointer-events-none">
       {/* Palette */}
       <div className="relative w-full h-full max-h-108 max-w-2xl bg-bg rounded-xl shadow-2xl overflow-hidden border border-border animate-slide-down flex flex-col pointer-events-auto">
-        {/* Search input */}
-        <div className="border-b border-border flex-none">
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Search notes or type a command..."
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            className="w-full px-4.5 py-3.5 text-[17px] bg-transparent outline-none text-text placeholder-text-muted/50"
-          />
-        </div>
-
-        {/* Results */}
-        <div ref={listRef} className="overflow-y-auto h-full p-2.5 flex-1">
-          {allItems.length === 0 ? (
-            <div className="text-sm font-medium opacity-50 text-text-muted p-2">
-              No results found
+        {templateMode ? (
+          <>
+            {/* Template picker header */}
+            <div className="border-b border-border flex-none">
+              <div className="flex items-center px-4.5">
+                <button
+                  onClick={() => {
+                    setTemplateMode(false);
+                    setTemplateQuery("");
+                    setSelectedIndex(0);
+                  }}
+                  className="mr-2 text-text-muted hover:text-text transition-colors"
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M15 18l-6-6 6-6" />
+                  </svg>
+                </button>
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={templateQuery}
+                  onChange={(e) => {
+                    setTemplateQuery(e.target.value);
+                    setSelectedIndex(0);
+                  }}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Search templates..."
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  className="w-full py-3.5 text-[17px] bg-transparent outline-none text-text placeholder-text-muted/50"
+                />
+              </div>
             </div>
-          ) : (
-            <>
-              {/* Commands section */}
-              {filteredCommands.length > 0 && (
-                <div className="space-y-0.5 mb-5">
-                  <div className="text-sm font-medium text-text-muted px-2.5 py-1.5">
-                    Commands
-                  </div>
-                  {filteredCommands.map((cmd, i) => {
-                    return (
-                      <div key={cmd.id} data-index={i}>
-                        <CommandItem
-                          label={cmd.label}
-                          shortcut={cmd.shortcut}
-                          icon={cmd.icon}
-                          isSelected={selectedIndex === i}
-                          onClick={cmd.action}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
 
-              {/* Notes section */}
-              {filteredNotes.length > 0 && (
+            {/* Template list */}
+            <div
+              ref={listRef}
+              className="overflow-y-auto h-full p-2.5 flex-1"
+            >
+              {filteredTemplates.length === 0 ? (
+                <div className="text-sm font-medium opacity-50 text-text-muted p-2">
+                  No templates found
+                </div>
+              ) : (
                 <div className="space-y-0.5">
                   <div className="text-sm font-medium text-text-muted px-2.5 py-1.5">
-                    Notes
+                    Templates ({filteredTemplates.length})
                   </div>
-                  {filteredNotes.slice(0, 10).map((note, i) => {
-                    const title = cleanTitle(note.title);
-                    const firstLetter = title.charAt(0).toUpperCase();
-                    // Clean subtitle: treat whitespace-only or &nbsp; as empty
-                    const cleanSubtitle = note.preview
-                      ?.replace(/&nbsp;/g, " ")
-                      .replace(/\u00A0/g, " ")
-                      .trim();
-                    const index = commandsCount + i;
-                    return (
-                      <div key={note.id} data-index={index}>
-                        <CommandItem
-                          label={title}
-                          subtitle={cleanSubtitle}
-                          iconText={firstLetter}
-                          variant="note"
-                          isSelected={selectedIndex === index}
-                          onClick={allItems[index].action}
-                        />
-                      </div>
-                    );
-                  })}
+                  {filteredTemplates.map((template, i) => (
+                    <div key={template.id} data-index={i}>
+                      <CommandItem
+                        label={template.name}
+                        icon={
+                          <TemplateIcon className="w-4.5 h-4.5 stroke-[1.5]" />
+                        }
+                        isSelected={selectedIndex === i}
+                        onClick={() => {
+                          createNoteFromTemplate(template.id);
+                          onClose();
+                        }}
+                      />
+                    </div>
+                  ))}
                 </div>
               )}
-            </>
-          )}
-        </div>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Search input */}
+            <div className="border-b border-border flex-none">
+              <input
+                ref={inputRef}
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Search notes or type a command..."
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                className="w-full px-4.5 py-3.5 text-[17px] bg-transparent outline-none text-text placeholder-text-muted/50"
+              />
+            </div>
+
+            {/* Results */}
+            <div
+              ref={listRef}
+              className="overflow-y-auto h-full p-2.5 flex-1"
+            >
+              {allItems.length === 0 ? (
+                <div className="text-sm font-medium opacity-50 text-text-muted p-2">
+                  No results found
+                </div>
+              ) : (
+                <>
+                  {/* Commands section */}
+                  {filteredCommands.length > 0 && (
+                    <div className="space-y-0.5 mb-5">
+                      <div className="text-sm font-medium text-text-muted px-2.5 py-1.5">
+                        Commands
+                      </div>
+                      {filteredCommands.map((cmd, i) => {
+                        return (
+                          <div key={cmd.id} data-index={i}>
+                            <CommandItem
+                              label={cmd.label}
+                              shortcut={cmd.shortcut}
+                              icon={cmd.icon}
+                              isSelected={selectedIndex === i}
+                              onClick={cmd.action}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Notes section */}
+                  {filteredNotes.length > 0 && (
+                    <div className="space-y-0.5">
+                      <div className="text-sm font-medium text-text-muted px-2.5 py-1.5">
+                        Notes
+                      </div>
+                      {filteredNotes.slice(0, 10).map((note, i) => {
+                        const title = cleanTitle(note.title);
+                        const firstLetter = title.charAt(0).toUpperCase();
+                        const cleanSubtitle = note.preview
+                          ?.replace(/&nbsp;/g, " ")
+                          .replace(/\u00A0/g, " ")
+                          .trim();
+                        const index = commandsCount + i;
+                        return (
+                          <div key={note.id} data-index={index}>
+                            <CommandItem
+                              label={title}
+                              subtitle={cleanSubtitle}
+                              iconText={firstLetter}
+                              variant="note"
+                              isSelected={selectedIndex === index}
+                              onClick={allItems[index].action}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Delete confirmation dialog */}

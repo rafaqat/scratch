@@ -245,12 +245,13 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
             </DropdownMenu.Trigger>
             <DropdownMenu.Portal>
               <DropdownMenu.Content
-                className="min-w-[200px] bg-bg rounded-lg shadow-lg border border-border p-1.5 z-50 animate-slide-down"
+                className="min-w-[280px] max-w-[340px] bg-bg rounded-lg shadow-lg border border-border p-1.5 z-50 animate-slide-down flex flex-col"
                 align="end"
                 sideOffset={4}
+                style={{ maxHeight: "min(420px, calc(100vh - 120px))" }}
               >
                 <DropdownMenu.Item
-                  className="flex items-center gap-2.5 px-2.5 py-2 text-sm rounded-md cursor-pointer hover:bg-bg-muted outline-none data-[highlighted]:bg-bg-muted"
+                  className="flex items-center gap-2.5 px-2.5 py-2 text-sm rounded-md cursor-pointer hover:bg-bg-muted outline-none data-[highlighted]:bg-bg-muted flex-none"
                   onSelect={() => createNote()}
                 >
                   <AddNoteIcon className="w-4 h-4 stroke-[1.5] text-text-muted" />
@@ -259,20 +260,42 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
                 </DropdownMenu.Item>
                 {templates.length > 0 && (
                   <>
-                    <DropdownMenu.Separator className="h-px bg-border my-1" />
-                    <DropdownMenu.Label className="px-2.5 py-1 text-xs font-medium text-text-muted">
+                    <DropdownMenu.Separator className="h-px bg-border my-1 flex-none" />
+                    <DropdownMenu.Label className="px-2.5 py-1 text-xs font-medium text-text-muted flex-none">
                       Templates
                     </DropdownMenu.Label>
-                    {templates.map((template) => (
-                      <DropdownMenu.Item
-                        key={template.id}
-                        className="flex items-center gap-2.5 px-2.5 py-2 text-sm rounded-md cursor-pointer hover:bg-bg-muted outline-none data-[highlighted]:bg-bg-muted"
-                        onSelect={() => createNoteFromTemplate(template.id)}
-                      >
-                        <TemplateIcon className="w-4 h-4 stroke-[1.5] text-text-muted" />
-                        <span>{template.name}</span>
-                      </DropdownMenu.Item>
-                    ))}
+                    <div className="px-1.5 pb-1 flex-none">
+                      <input
+                        type="text"
+                        placeholder="Filter templates..."
+                        className="w-full px-2 py-1.5 text-sm bg-bg-muted rounded-md outline-none text-text placeholder-text-muted/50 border border-border focus:border-text-muted/30"
+                        onChange={(e) => {
+                          const el = e.currentTarget.closest('[role="menu"]');
+                          if (el) el.setAttribute("data-template-filter", e.target.value.toLowerCase());
+                          // Force re-render of template items visibility
+                          el?.querySelectorAll("[data-template-name]").forEach((item) => {
+                            const name = item.getAttribute("data-template-name") || "";
+                            (item as HTMLElement).style.display = name.includes(e.target.value.toLowerCase()) ? "" : "none";
+                          });
+                        }}
+                        onKeyDown={(e) => e.stopPropagation()}
+                        onClick={(e) => e.stopPropagation()}
+                        autoFocus
+                      />
+                    </div>
+                    <div className="overflow-y-auto flex-1 min-h-0">
+                      {templates.map((template) => (
+                        <DropdownMenu.Item
+                          key={template.id}
+                          data-template-name={template.name.toLowerCase()}
+                          className="flex items-center gap-2.5 px-2.5 py-2 text-sm rounded-md cursor-pointer hover:bg-bg-muted outline-none data-[highlighted]:bg-bg-muted"
+                          onSelect={() => createNoteFromTemplate(template.id)}
+                        >
+                          <TemplateIcon className="w-4 h-4 stroke-[1.5] text-text-muted flex-none" />
+                          <span className="truncate">{template.name}</span>
+                        </DropdownMenu.Item>
+                      ))}
+                    </div>
                   </>
                 )}
               </DropdownMenu.Content>

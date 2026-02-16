@@ -1233,14 +1233,14 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
       const rawResult = resolveNoteLink(rawHref, currentId, allNotes);
       if (rawResult && allNotes.some((n) => n.id === rawResult.noteId)) {
         console.log("[LinkHandler] Navigating to note (raw):", rawResult.noteId);
-        selectNote(rawResult.noteId);
+        setTimeout(() => selectNote(rawResult.noteId), 0);
         return;
       }
 
       const resolvedResult = resolveNoteLink(resolvedHref, currentId, allNotes);
       if (resolvedResult && allNotes.some((n) => n.id === resolvedResult.noteId)) {
         console.log("[LinkHandler] Navigating to note (resolved):", resolvedResult.noteId);
-        selectNote(resolvedResult.noteId);
+        setTimeout(() => selectNote(resolvedResult.noteId), 0);
         return;
       }
 
@@ -1258,7 +1258,7 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
       const bestGuess = rawResult ?? resolvedResult;
       if (bestGuess) {
         console.log("[LinkHandler] Note not in local list, trying selectNote:", bestGuess.noteId);
-        selectNote(bestGuess.noteId);
+        setTimeout(() => selectNote(bestGuess.noteId), 0);
         return;
       }
 
@@ -1700,13 +1700,39 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
     return preprocessSvg(preprocessDatabaseRefs(preprocessBookmarks(preprocessCallouts(body))));
   }, []);
 
+  // Post-parse: convert paragraphs containing %%DB:name:view%% markers into databaseTable blocks
+  const injectDatabaseBlocks = useCallback((blocks: any[]): any[] => {
+    return blocks.map((block) => {
+      if (block.type === "paragraph" && block.content) {
+        const textContent = block.content
+          .map((c: any) => (typeof c === "string" ? c : c.text || ""))
+          .join("");
+        const dbMatch = textContent.match(/%%DB:([^:]+):(\w+)%%/);
+        if (dbMatch) {
+          return {
+            type: "databaseTable",
+            props: {
+              databaseName: dbMatch[1],
+              view: dbMatch[2],
+            },
+            children: [],
+          };
+        }
+      }
+      if (block.children && block.children.length > 0) {
+        return { ...block, children: injectDatabaseBlocks(block.children) };
+      }
+      return block;
+    });
+  }, []);
+
   // Parse markdown to blocks with fallback to raw text paragraphs
   const parseMarkdownSafe = useCallback(
     (body: string) => {
       try {
         const blocks = editor.tryParseMarkdownToBlocks(body);
         if (blocks && blocks.length > 0) {
-          return injectWikilinks(blocks);
+          return injectDatabaseBlocks(injectWikilinks(blocks));
         }
       } catch (err) {
         console.error("[Editor] Parse pipeline failed:", err);
@@ -1718,7 +1744,7 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
         content: [{ type: "text" as const, text: line, styles: {} }],
       }));
     },
-    [editor],
+    [editor, injectDatabaseBlocks],
   );
 
   // Load note content when the current note changes
@@ -1742,12 +1768,15 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
 
         const body = extractBody(currentNote.content);
         const blocks = parseMarkdownSafe(body);
-        try {
-          editor.replaceBlocks(editor.document, blocks);
-        } catch (err) {
-          console.error("BlockNote replaceBlocks failed:", err);
-        }
-        isLoadingRef.current = false;
+        // Defer replaceBlocks to avoid flushSync-during-lifecycle conflict
+        setTimeout(() => {
+          try {
+            editor.replaceBlocks(editor.document, blocks);
+          } catch (err) {
+            console.error("BlockNote replaceBlocks failed:", err);
+          }
+          isLoadingRef.current = false;
+        }, 0);
         return;
       }
       loadedModifiedRef.current = currentNote.modified;
@@ -1777,33 +1806,40 @@ export function Editor({ onToggleSidebar, sidebarVisible }: EditorProps) {
     const body = extractBody(currentNote.content);
     const blocks = parseMarkdownSafe(body);
     if (loadedNoteIdRef.current !== loadingNoteId) return;
-    try {
-      editor.replaceBlocks(editor.document, blocks);
-    } catch (err) {
-      console.error("BlockNote replaceBlocks failed:", err);
-    }
 
-    scrollContainerRef.current?.scrollTo(0, 0);
-
-    requestAnimationFrame(() => {
+    // Defer replaceBlocks to avoid flushSync-during-lifecycle conflict.
+    // BlockNote/TipTap uses flushSync internally which errors if called
+    // during React's effect phase.
+    setTimeout(() => {
       if (loadedNoteIdRef.current !== loadingNoteId) return;
-      scrollContainerRef.current?.scrollTo(0, 0);
-      isLoadingRef.current = false;
-
-      // Position cursor at template cursor line if pending
-      if (pendingCursorLine != null && pendingCursorLine >= 0) {
-        try {
-          const blocks = editor.document;
-          const targetBlock = blocks[Math.min(pendingCursorLine, blocks.length - 1)];
-          if (targetBlock) {
-            editor.setTextCursorPosition(targetBlock.id, "end");
-          }
-        } catch {
-          // Ignore cursor positioning errors
-        }
-        clearPendingCursorLine();
+      try {
+        editor.replaceBlocks(editor.document, blocks);
+      } catch (err) {
+        console.error("BlockNote replaceBlocks failed:", err);
       }
-    });
+
+      scrollContainerRef.current?.scrollTo(0, 0);
+
+      requestAnimationFrame(() => {
+        if (loadedNoteIdRef.current !== loadingNoteId) return;
+        scrollContainerRef.current?.scrollTo(0, 0);
+        isLoadingRef.current = false;
+
+        // Position cursor at template cursor line if pending
+        if (pendingCursorLine != null && pendingCursorLine >= 0) {
+          try {
+            const blocks = editor.document;
+            const targetBlock = blocks[Math.min(pendingCursorLine, blocks.length - 1)];
+            if (targetBlock) {
+              editor.setTextCursorPosition(targetBlock.id, "end");
+            }
+          } catch {
+            // Ignore cursor positioning errors
+          }
+          clearPendingCursorLine();
+        }
+      });
+    }, 0);
   }, [currentNote, editor, flushPendingSave, reloadVersion, extractBody, parseMarkdownSafe, pendingCursorLine, clearPendingCursorLine]);
 
   // Scroll to top on mount

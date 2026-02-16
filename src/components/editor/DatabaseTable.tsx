@@ -1625,27 +1625,30 @@ export const DatabaseTableBlock = createReactBlockSpec(
     },
 
     toExternalHTML: (props) => {
-      const { databaseName } = props.block.props;
-      if (!databaseName) return <p />;
+      const { databaseName, view } = props.block.props;
+      if (!databaseName) return <div />;
+      const viewType = view || "table";
       return (
-        <p data-database-table={databaseName}>
-          {`[database:${databaseName}](view:table)`}
-        </p>
+        <div data-database-table={databaseName} data-database-view={viewType} />
       );
     },
 
     parse: (element: HTMLElement) => {
-      // Parse from data attribute
-      const dbName = element.getAttribute("data-database-table");
+      // Parse from data attribute (getAttribute or dataset)
+      const dbName = element.getAttribute("data-database-table") || element.dataset?.databaseTable;
       if (dbName) {
-        return { databaseName: dbName };
+        const viewAttr = element.getAttribute("data-database-view") || element.dataset?.databaseView || "table";
+
+        return { databaseName: dbName, view: viewAttr };
       }
 
-      // Parse from markdown reference: [database:name](view:table)
+      // Parse from markdown reference: [database:name](view:viewtype)
       const text = element.textContent?.trim() || "";
-      const match = text.match(/^\[database:([^\]]+)\]\(view:table\)$/);
+      const match = text.match(/\[database:([^\]]+)\]/);
       if (match) {
-        return { databaseName: match[1] };
+        const viewMatch = text.match(/view:(\w+)/);
+
+        return { databaseName: match[1], view: viewMatch?.[1] || "table" };
       }
 
       return undefined;
